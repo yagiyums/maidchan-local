@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QApplication
 
 from maidchan.assistant import LocalAssistant
 from maidchan.config import AppConfig
+from maidchan.ollama_runtime import OllamaRuntime
 from maidchan.ui import MascotWindow
 
 
@@ -15,7 +16,9 @@ def main() -> int:
     app.setQuitOnLastWindowClosed(False)
     config = AppConfig.load()
     assistant = LocalAssistant(config)
-    window = MascotWindow(config, assistant)
+    runtime = OllamaRuntime(config, assistant.client)
+    app.aboutToQuit.connect(runtime.stop_if_owned)
+    window = MascotWindow(config, assistant, runtime)
     window.show()
     return app.exec()
 

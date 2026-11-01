@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from .assistant import LocalAssistant, Reply
 from .config import AppConfig
+from .ollama_runtime import OllamaRuntime, RuntimeResult
 
 
 class WorkerSignals(QObject):
@@ -38,17 +39,38 @@ class ReplyWorker(QRunnable):
         self.signals.finished.emit(reply)
 
 
+class RuntimeWorkerSignals(QObject):
+    progress = Signal(str)
+    finished = Signal(object)
+
+
+class RuntimeWorker(QRunnable):
+    def __init__(self, runtime: OllamaRuntime) -> None:
+        super().__init__()
+        self.runtime = runtime
+        self.signals = RuntimeWorkerSignals()
+
+    @Slot()
+    def run(self) -> None:
+        result = self.runtime.ensure_ready(self.signals.progress.emit)
+        self.signals.finished.emit(result)
+
+
 class MascotWindow(QWidget):
-    def __init__(self, config: AppConfig, assistant: LocalAssistant) -> None:
+    def __init__(
+        self, config: AppConfig, assistant: LocalAssistant, runtime: OllamaRuntime
+    ) -> None:
         super().__init__()
         self.config = config
         self.assistant = assistant
+        self.runtime = runtime
         self._drag_offset: QPoint | None = None
         self._threads = QThreadPool.globalInstance()
         self._setup_window()
         self._setup_ui()
         self._setup_tray()
         self._restore_position()
+        self.start_local_ai()
 
     def _setup_window(self) -> None:
         flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
@@ -124,12 +146,15 @@ class MascotWindow(QWidget):
         talk.triggered.connect(self.show_chat)
         status = QAction("Ollama接続を確認", self)
         status.triggered.connect(lambda: self._submit("/status"))
+        start_ai = QAction("ローカルAIを起動", self)
+        start_ai.triggered.connect(self.start_local_ai)
         hide = QAction("隠す / 表示", self)
         hide.triggered.connect(self._toggle_visible)
         quit_action = QAction("終了", self)
         quit_action.triggered.connect(QApplication.instance().quit)
         menu.addAction(talk)
         menu.addAction(status)
+        menu.addAction(start_ai)
         menu.addSeparator()
         menu.addAction(hide)
         menu.addAction(quit_action)
@@ -166,6 +191,28 @@ class MascotWindow(QWidget):
         worker = ReplyWorker(self.assistant, text)
         worker.signals.finished.connect(self._show_reply)
         self._threads.start(worker)
+
+    def start_local_ai(self) -> None:
+        self.show_chat()
+        self._show_runtime_progress("ローカルAIを確認中…")
+        worker = RuntimeWorker(self.runtime)
+        worker.signals.progress.connect(self._show_runtime_progress)
+        worker.signals.finished.connect(self._runtime_finished)
+        self._threads.start(worker)
+
+    @Slot(str)
+    def _show_runtime_progress(self, message: str) -> None:
+        self.message.setText(message)
+        self.input.setEnabled(False)
+        self.send_button.setEnabled(False)
+
+    @Slot(object)
+    def _runtime_finished(self, result: RuntimeResult) -> None:
+        self.message.setText(result.message)
+        self.input.setEnabled(True)
+        self.send_button.setEnabled(True)
+        self.input.setFocus()
+        self.adjustSize()
 
     @Slot(object)
     def _show_reply(self, reply: Reply) -> None:

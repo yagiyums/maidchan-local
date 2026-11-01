@@ -21,8 +21,11 @@ class AppConfig:
     user_name: str = "ご主人様"
     ollama_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen2.5:3b"
+    auto_start_ollama: bool = True
+    auto_pull_model: bool = True
     temperature: float = 0.7
     request_timeout_seconds: int = 90
+    model_pull_timeout_seconds: int = 3600
     mascot_width: int = 190
     always_on_top: bool = True
     save_history: bool = True

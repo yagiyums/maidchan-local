@@ -10,6 +10,7 @@ Windowsデスクトップに常駐する、ローカル完結型のパーソナ�
 - ドラッグ移動、ダブルクリック会話、右クリックメニュー
 - タスクトレイ常駐
 - Ollama経由の日本語会話（既定: `qwen2.5:3b`）
+- 起動時にOllamaを自動検出・自動起動し、初回のみモデルを自動取得
 - `%APPDATA%\MaidchanLocal` だけに保存される設定と会話履歴
 - Ollama未接続時の完全オフライン応答
 
@@ -22,10 +23,10 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\setup.ps1
 ```
 
-自由な会話を使う場合はOllamaをインストールし、PowerShellでモデルを取得します。
+自由な会話を使う場合は、先に[Ollama for Windows](https://ollama.com/download/windows)をインストールしてください。Maid-chan Localの起動時にOllamaもバックグラウンドで起動し、モデルがなければ初回のみ自動取得します。
 
 ```powershell
-ollama pull qwen2.5:3b
+irm https://ollama.com/install.ps1 | iex
 ```
 
 その後、次のコマンドで起動します。
@@ -56,6 +57,8 @@ Ollamaもモデルもローカルで動作します。初回モデル取得時�
   "user_name": "ご主人様",
   "ollama_url": "http://127.0.0.1:11434",
   "ollama_model": "qwen2.5:3b",
+  "auto_start_ollama": true,
+  "auto_pull_model": true,
   "mascot_width": 190,
   "save_history": true
 }

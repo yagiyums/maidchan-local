@@ -65,6 +65,51 @@ class OllamaClient:
         except (urllib.error.URLError, TimeoutError, OSError):
             return False
 
+    def installed_models(self) -> set[str]:
+        endpoint = self.config.ollama_url.rstrip("/") + "/api/tags"
+        try:
+            with urllib.request.urlopen(endpoint, timeout=5) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+            raise OllamaError(str(exc)) from exc
+        names: set[str] = set()
+        for model in body.get("models", []):
+            for key in ("name", "model"):
+                value = model.get(key)
+                if isinstance(value, str):
+                    names.add(value)
+        return names
+
+    def has_model(self, model_name: str | None = None) -> bool:
+        expected = model_name or self.config.ollama_model
+        installed = self.installed_models()
+        if expected in installed:
+            return True
+        if ":" not in expected:
+            return f"{expected}:latest" in installed
+        return False
+
+    def pull_model(self, model_name: str | None = None) -> None:
+        endpoint = self.config.ollama_url.rstrip("/") + "/api/pull"
+        payload = json.dumps(
+            {"model": model_name or self.config.ollama_model, "stream": False}
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            endpoint,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(
+                request, timeout=self.config.model_pull_timeout_seconds
+            ) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+            raise OllamaError(str(exc)) from exc
+        if body.get("status") != "success":
+            raise OllamaError(body.get("error") or "Model download did not complete")
+
 
 class LocalAssistant:
     def __init__(self, config: AppConfig, memory: ConversationMemory | None = None) -> None:
