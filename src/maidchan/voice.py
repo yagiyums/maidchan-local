@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import audioop
 import json
 import math
 import os
@@ -146,6 +147,51 @@ def pcm16_rms(audio: bytes) -> float:
     return math.sqrt(sum(sample * sample for sample in samples) / len(samples))
 
 
+def amplify_pcm16(audio: bytes, gain: float) -> bytes:
+    if not audio:
+        return b""
+    return audioop.mul(audio, 2, max(0.0, min(8.0, gain)))
+
+
+def pcm16_level_percent(audio: bytes) -> int:
+    rms = pcm16_rms(audio)
+    if rms <= 0:
+        return 0
+    decibels = 20 * math.log10(rms / 32768)
+    return max(0, min(100, round((decibels + 60) * 100 / 54)))
+
+
+def prepare_audio_for_recognition(
+    audio: bytes,
+    sample_rate: int,
+    *,
+    target_rate: int = 16000,
+    target_rms: int = 4000,
+    max_gain: float = 8.0,
+) -> tuple[bytes, int]:
+    if not audio or sample_rate <= 0:
+        return audio, sample_rate
+
+    even_audio = audio[: len(audio) // 2 * 2]
+    centered = audioop.bias(even_audio, 2, -audioop.avg(even_audio, 2))
+    if sample_rate != target_rate:
+        centered, _state = audioop.ratecv(centered, 2, 1, sample_rate, target_rate, None)
+
+    block_bytes = max(2, target_rate // 50 * 2)
+    levels = [
+        audioop.rms(centered[offset : offset + block_bytes], 2)
+        for offset in range(0, len(centered), block_bytes)
+        if len(centered[offset : offset + block_bytes]) >= 2
+    ]
+    nonzero_levels = sorted(level for level in levels if level > 20)
+    if not nonzero_levels:
+        return centered, target_rate
+    top_count = max(1, math.ceil(len(nonzero_levels) * 0.2))
+    speech_rms = sum(nonzero_levels[-top_count:]) / top_count
+    gain = max(0.25, min(max_gain, target_rms / speech_rms))
+    return audioop.mul(centered, 2, gain), target_rate
+
+
 class EnergyVoiceDetector:
     def __init__(self, sample_rate: int, config: AppConfig) -> None:
         self.sample_rate = sample_rate
@@ -223,6 +269,7 @@ class ContinuousMicrophoneListener:
         self.on_utterance: Callable[[bytes, int], None] = lambda _audio, _rate: None
         self.on_status: Callable[[str], None] = lambda _message: None
         self.on_error: Callable[[str], None] = lambda _message: None
+        self.on_level: Callable[[int], None] = lambda _level: None
 
     @property
     def is_running(self) -> bool:
@@ -238,10 +285,12 @@ class ContinuousMicrophoneListener:
         on_utterance: Callable[[bytes, int], None],
         on_status: Callable[[str], None],
         on_error: Callable[[str], None],
+        on_level: Callable[[int], None],
     ) -> None:
         self.on_utterance = on_utterance
         self.on_status = on_status
         self.on_error = on_error
+        self.on_level = on_level
 
     def start(self) -> None:
         if self.is_running:
@@ -274,6 +323,7 @@ class ContinuousMicrophoneListener:
 
     def pause(self) -> None:
         self._paused.set()
+        self.on_level(0)
 
     def resume(self) -> None:
         if not self.is_running:
@@ -283,6 +333,7 @@ class ContinuousMicrophoneListener:
         if self._detector is not None:
             self._detector.reset()
         self._paused.clear()
+        self.on_level(0)
         self.on_status("🎤 自動待受中")
 
     def stop(self) -> None:
@@ -300,6 +351,7 @@ class ContinuousMicrophoneListener:
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=2)
         self._drain_queue()
+        self.on_level(0)
 
     def _audio_callback(self, indata, _frames, _time, status) -> None:  # type: ignore[no-untyped-def]
         if status or self._paused.is_set():
@@ -318,9 +370,12 @@ class ContinuousMicrophoneListener:
                     continue
                 if self._paused.is_set() or self._detector is None:
                     continue
-                utterance = self._detector.accept(audio)
+                amplified = amplify_pcm16(audio, self.config.microphone_gain)
+                self.on_level(pcm16_level_percent(amplified))
+                utterance = self._detector.accept(amplified)
                 if utterance:
                     self._paused.set()
+                    self.on_level(0)
                     self.on_status("音声を認識中…")
                     self.on_utterance(utterance, self.sample_rate)
         except (ValueError, RuntimeError, VoiceError) as exc:
@@ -336,8 +391,13 @@ class ContinuousMicrophoneListener:
 
 
 class OfflineSpeechRecognizer:
-    def __init__(self, model_manager: SpeechModelManager | None = None) -> None:
+    def __init__(
+        self,
+        model_manager: SpeechModelManager | None = None,
+        config: AppConfig | None = None,
+    ) -> None:
         self.model_manager = model_manager or SpeechModelManager()
+        self.config = config or AppConfig()
         self._model: Model | None = None
         self._model_lock = threading.Lock()
 
@@ -350,10 +410,16 @@ class OfflineSpeechRecognizer:
         if not audio:
             return ""
         model = self._load_model(progress)
+        prepared_audio, recognition_rate = prepare_audio_for_recognition(
+            audio,
+            sample_rate,
+            target_rms=self.config.recognition_target_rms,
+            max_gain=self.config.recognition_max_gain,
+        )
         try:
-            recognizer = KaldiRecognizer(model, sample_rate)
-            for offset in range(0, len(audio), 16000):
-                recognizer.AcceptWaveform(audio[offset : offset + 16000])
+            recognizer = KaldiRecognizer(model, recognition_rate)
+            for offset in range(0, len(prepared_audio), 16000):
+                recognizer.AcceptWaveform(prepared_audio[offset : offset + 16000])
             result = json.loads(recognizer.FinalResult())
         except (ValueError, RuntimeError, json.JSONDecodeError) as exc:
             raise VoiceError(f"音声を認識できませんでした: {exc}") from exc
@@ -564,7 +630,7 @@ class VoiceServices:
     def __init__(self, config: AppConfig) -> None:
         self.recorder = MicrophoneRecorder(config.microphone_device)
         self.listener = ContinuousMicrophoneListener(config)
-        self.recognizer = OfflineSpeechRecognizer()
+        self.recognizer = OfflineSpeechRecognizer(config=config)
         self.voicevox = VoicevoxRuntime(config)
         self.synthesizer = SpeechSynthesizer(config, self.voicevox)
 

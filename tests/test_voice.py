@@ -5,7 +5,10 @@ from maidchan.voice import (
     EnergyVoiceDetector,
     SpeechModelManager,
     VoicevoxRuntime,
+    amplify_pcm16,
     apply_voicevox_settings,
+    pcm16_rms,
+    prepare_audio_for_recognition,
     sanitize_for_speech,
 )
 
@@ -71,3 +74,22 @@ def test_energy_detector_emits_after_speech_and_silence() -> None:
             break
     assert result is not None
     assert len(result) > len(speech)
+
+
+def test_pcm_gain_amplifies_quiet_audio() -> None:
+    quiet = array("h", [100, -100] * 800).tobytes()
+    amplified = amplify_pcm16(quiet, 3.0)
+    assert 295 <= pcm16_rms(amplified) <= 305
+
+
+def test_recognition_audio_is_resampled_and_normalized() -> None:
+    quiet = array("h", [200, -200] * 4410).tobytes()
+    prepared, sample_rate = prepare_audio_for_recognition(
+        quiet,
+        44100,
+        target_rms=4000,
+        max_gain=8.0,
+    )
+    assert sample_rate == 16000
+    assert 6000 <= len(prepared) <= 7000
+    assert pcm16_rms(prepared) > pcm16_rms(quiet)

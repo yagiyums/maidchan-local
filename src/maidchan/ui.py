@@ -19,7 +19,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMenu,
+    QProgressBar,
     QPushButton,
+    QSlider,
     QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
@@ -75,6 +77,7 @@ class ListeningSignals(QObject):
     utterance = Signal(bytes, int)
     status = Signal(str)
     failed = Signal(str)
+    level = Signal(int)
 
 
 class TranscriptionWorker(QRunnable):
@@ -141,10 +144,12 @@ class MascotWindow(QWidget):
         self._listen_signals.utterance.connect(self._auto_utterance)
         self._listen_signals.status.connect(self._set_mic_status)
         self._listen_signals.failed.connect(self._voice_failed)
+        self._listen_signals.level.connect(self._set_mic_level)
         self.voice.listener.set_callbacks(
             on_utterance=self._listen_signals.utterance.emit,
             on_status=self._listen_signals.status.emit,
             on_error=self._listen_signals.failed.emit,
+            on_level=self._listen_signals.level.emit,
         )
         self._drag_offset: QPoint | None = None
         self._threads = QThreadPool.globalInstance()
@@ -195,6 +200,38 @@ class MascotWindow(QWidget):
         input_row.addWidget(self.mic_status)
         input_row.addWidget(self.speaker_button)
         bubble_layout.addLayout(input_row)
+
+        audio_row = QHBoxLayout()
+        audio_row.addWidget(QLabel("メイドちゃん音量"))
+        self.volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self.volume_slider.setRange(0, 200)
+        self.volume_slider.setSingleStep(5)
+        self.volume_slider.setValue(round(self.config.voicevox_volume_scale * 100))
+        self.volume_slider.setToolTip("VOICEVOXの読み上げ音量（0〜200%）")
+        self.volume_value = QLabel(f"{self.volume_slider.value()}%")
+        self.volume_slider.valueChanged.connect(self._set_voice_volume)
+        audio_row.addWidget(self.volume_slider, 1)
+        audio_row.addWidget(self.volume_value)
+
+        audio_row.addWidget(QLabel("マイク感度"))
+        self.mic_gain_slider = QSlider(Qt.Orientation.Horizontal)
+        self.mic_gain_slider.setRange(100, 600)
+        self.mic_gain_slider.setSingleStep(25)
+        self.mic_gain_slider.setValue(round(self.config.microphone_gain * 100))
+        self.mic_gain_slider.setToolTip("小さいマイク入力を認識前に増幅します")
+        self.mic_gain_value = QLabel(f"{self.mic_gain_slider.value()}%")
+        self.mic_gain_slider.valueChanged.connect(self._set_microphone_gain)
+        audio_row.addWidget(self.mic_gain_slider, 1)
+        audio_row.addWidget(self.mic_gain_value)
+
+        self.mic_level = QProgressBar()
+        self.mic_level.setRange(0, 100)
+        self.mic_level.setValue(0)
+        self.mic_level.setTextVisible(False)
+        self.mic_level.setFixedWidth(60)
+        self.mic_level.setToolTip("現在のマイク入力レベル")
+        audio_row.addWidget(self.mic_level)
+        bubble_layout.addLayout(audio_row)
         self.bubble.hide()
         root.addWidget(self.bubble)
 
@@ -240,6 +277,17 @@ class MascotWindow(QWidget):
                 color: #fff; background: #9d3448; border: 0; border-radius: 8px; padding: 8px 12px;
             }
             QPushButton:disabled { background: #5c4a50; }
+            QSlider::groove:horizontal {
+                height: 5px; background: rgba(255,255,255,45); border-radius: 2px;
+            }
+            QSlider::sub-page:horizontal { background: #dc667d; border-radius: 2px; }
+            QSlider::handle:horizontal {
+                background: #fff7f2; width: 13px; margin: -4px 0; border-radius: 6px;
+            }
+            QProgressBar {
+                background: rgba(255,255,255,25); border: 0; border-radius: 4px;
+            }
+            QProgressBar::chunk { background: #65d39b; border-radius: 4px; }
             """
         )
         self.adjustSize()
@@ -319,6 +367,23 @@ class MascotWindow(QWidget):
     @Slot(str)
     def _set_mic_status(self, status: str) -> None:
         self.mic_status.setText(status)
+
+    @Slot(int)
+    def _set_mic_level(self, level: int) -> None:
+        self.mic_level.setValue(level)
+
+    @Slot(int)
+    def _set_voice_volume(self, percent: int) -> None:
+        self.config.voicevox_volume_scale = percent / 100
+        self.config.tts_volume = min(100, percent)
+        self.volume_value.setText(f"{percent}%")
+        self.config.save()
+
+    @Slot(int)
+    def _set_microphone_gain(self, percent: int) -> None:
+        self.config.microphone_gain = percent / 100
+        self.mic_gain_value.setText(f"{percent}%")
+        self.config.save()
 
     @Slot(bool)
     def _set_hands_free(self, enabled: bool) -> None:
