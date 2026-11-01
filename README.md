@@ -11,6 +11,8 @@ Windowsデスクトップに常駐する、ローカル完結型のパーソナ�
 - タスクトレイ常駐
 - Ollama経由の日本語会話（既定: `qwen2.5:3b`）
 - 起動時にOllamaを自動検出・自動起動し、初回のみモデルを自動取得
+- マイクからの日本語音声入力（Voskによる完全ローカル認識）
+- メイドちゃんの応答読み上げ（Windows日本語女性音声）
 - `%APPDATA%\MaidchanLocal` だけに保存される設定と会話履歴
 - Ollama未接続時の完全オフライン応答
 
@@ -42,6 +44,8 @@ Ollamaもモデルもローカルで動作します。初回モデル取得時�
 - キャラクターをドラッグ: 移動（位置は自動保存）
 - ダブルクリック: 会話欄を開閉
 - 右クリック: メニュー
+- `🎤 話す`: 録音開始。話し終えたら `■ 停止` で認識・送信
+- `🔊` / `🔇`: 応答の読み上げを切り替え
 - `/status`: Ollama接続状態
 - `/model`: 使用モデル
 - `/clear`: 会話履歴の削除
@@ -59,6 +63,9 @@ Ollamaもモデルもローカルで動作します。初回モデル取得時�
   "ollama_model": "qwen2.5:3b",
   "auto_start_ollama": true,
   "auto_pull_model": true,
+  "voice_input_enabled": true,
+  "tts_enabled": true,
+  "tts_voice_keyword": "Haruka",
   "mascot_width": 190,
   "save_history": true
 }
@@ -85,6 +92,8 @@ Python環境を含むWindowsアプリを生成する場合は次を実行しま�
 ## プライバシー
 
 アプリが直接通信するのは設定したOllamaエンドポイントだけです。既定値は同じPCの `127.0.0.1:11434` です。テレメトリ、広告SDK、クラウドAI SDKは含みません。会話履歴を残さない場合は `save_history` を `false` にしてください。
+
+マイク音声はメモリ上で処理し、録音ファイルとして保存しません。日本語文字起こしもPC内のVoskモデルで行い、音声をクラウドへ送信しません。音声入力を表示しない場合は `voice_input_enabled`、読み上げを停止する場合は `tts_enabled` を `false` にしてください。
 
 ## ライセンス
 

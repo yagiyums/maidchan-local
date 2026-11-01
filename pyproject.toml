@@ -4,13 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "maidchan-local"
-version = "0.1.0"
+version = "0.2.0"
 description = "A private, local-first Windows desktop mascot with Ollama-powered Japanese chat"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "yagiyums" }]
-dependencies = ["PySide6>=6.7,<7"]
+dependencies = [
+    "PySide6>=6.7,<7",
+    "comtypes>=1.4,<2",
+    "sounddevice>=0.5,<1",
+    "vosk>=0.3.45,<1",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6", "pyinstaller>=6"]

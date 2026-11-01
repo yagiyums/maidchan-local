@@ -23,6 +23,12 @@ class AppConfig:
     ollama_model: str = "qwen2.5:3b"
     auto_start_ollama: bool = True
     auto_pull_model: bool = True
+    voice_input_enabled: bool = True
+    tts_enabled: bool = True
+    tts_voice_keyword: str = "Haruka"
+    tts_rate: int = 1
+    tts_volume: int = 100
+    microphone_device: str | None = None
     temperature: float = 0.7
     request_timeout_seconds: int = 90
     model_pull_timeout_seconds: int = 3600

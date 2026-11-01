@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from .assistant import LocalAssistant, Reply
 from .config import AppConfig
 from .ollama_runtime import OllamaRuntime, RuntimeResult
+from .voice import VoiceError, VoiceServices
 
 
 class WorkerSignals(QObject):
@@ -56,14 +57,58 @@ class RuntimeWorker(QRunnable):
         self.signals.finished.emit(result)
 
 
+class TranscriptionSignals(QObject):
+    progress = Signal(str)
+    finished = Signal(str)
+    failed = Signal(str)
+
+
+class TranscriptionWorker(QRunnable):
+    def __init__(self, voice: VoiceServices, audio: bytes, sample_rate: int) -> None:
+        super().__init__()
+        self.voice = voice
+        self.audio = audio
+        self.sample_rate = sample_rate
+        self.signals = TranscriptionSignals()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            text = self.voice.recognizer.transcribe(
+                self.audio, self.sample_rate, self.signals.progress.emit
+            )
+            self.signals.finished.emit(text)
+        except VoiceError as exc:
+            self.signals.failed.emit(str(exc))
+
+
+class SpeechWorker(QRunnable):
+    def __init__(self, voice: VoiceServices, text: str) -> None:
+        super().__init__()
+        self.voice = voice
+        self.text = text
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            self.voice.synthesizer.speak(self.text)
+        except VoiceError:
+            pass
+
+
 class MascotWindow(QWidget):
     def __init__(
-        self, config: AppConfig, assistant: LocalAssistant, runtime: OllamaRuntime
+        self,
+        config: AppConfig,
+        assistant: LocalAssistant,
+        runtime: OllamaRuntime,
+        voice: VoiceServices,
     ) -> None:
         super().__init__()
         self.config = config
         self.assistant = assistant
         self.runtime = runtime
+        self.voice = voice
         self._drag_offset: QPoint | None = None
         self._threads = QThreadPool.globalInstance()
         self._setup_window()
@@ -101,8 +146,17 @@ class MascotWindow(QWidget):
         self.input.returnPressed.connect(self._send)
         self.send_button = QPushButton("送信")
         self.send_button.clicked.connect(self._send)
+        self.mic_button = QPushButton("🎤 話す")
+        self.mic_button.setToolTip("クリックで録音開始、もう一度クリックで送信")
+        self.mic_button.clicked.connect(self._toggle_recording)
+        self.mic_button.setVisible(self.config.voice_input_enabled)
+        self.speaker_button = QPushButton("🔊" if self.config.tts_enabled else "🔇")
+        self.speaker_button.setToolTip("応答音声のオン・オフ")
+        self.speaker_button.clicked.connect(self._toggle_speech)
         input_row.addWidget(self.input, 1)
         input_row.addWidget(self.send_button)
+        input_row.addWidget(self.mic_button)
+        input_row.addWidget(self.speaker_button)
         bubble_layout.addLayout(input_row)
         self.bubble.hide()
         root.addWidget(self.bubble)
@@ -188,9 +242,66 @@ class MascotWindow(QWidget):
         self.message.setText("考え中…")
         self.input.setEnabled(False)
         self.send_button.setEnabled(False)
+        self.mic_button.setEnabled(False)
         worker = ReplyWorker(self.assistant, text)
         worker.signals.finished.connect(self._show_reply)
         self._threads.start(worker)
+
+    def _toggle_recording(self) -> None:
+        if self.voice.recorder.is_recording:
+            try:
+                audio, sample_rate = self.voice.recorder.stop()
+            except VoiceError as exc:
+                self._voice_failed(str(exc))
+                return
+            self.mic_button.setText("🎤 話す")
+            self._show_voice_progress("音声を認識中…")
+            worker = TranscriptionWorker(self.voice, audio, sample_rate)
+            worker.signals.progress.connect(self._show_voice_progress)
+            worker.signals.finished.connect(self._transcription_finished)
+            worker.signals.failed.connect(self._voice_failed)
+            self._threads.start(worker)
+            return
+        try:
+            self.voice.recorder.start()
+        except VoiceError as exc:
+            self._voice_failed(str(exc))
+            return
+        self.mic_button.setText("■ 停止")
+        self.message.setText("録音中…\n話し終わったら「停止」を押してください。")
+        self.input.setEnabled(False)
+        self.send_button.setEnabled(False)
+
+    def _toggle_speech(self) -> None:
+        self.config.tts_enabled = not self.config.tts_enabled
+        self.config.save()
+        self.speaker_button.setText("🔊" if self.config.tts_enabled else "🔇")
+
+    @Slot(str)
+    def _show_voice_progress(self, message: str) -> None:
+        self.message.setText(message)
+        self.input.setEnabled(False)
+        self.send_button.setEnabled(False)
+        self.mic_button.setEnabled(False)
+
+    @Slot(str)
+    def _transcription_finished(self, text: str) -> None:
+        self.input.setEnabled(True)
+        self.send_button.setEnabled(True)
+        self.mic_button.setEnabled(True)
+        if not text:
+            self.message.setText("音声を聞き取れませんでした。もう一度お試しください。")
+            return
+        self.input.setText(text)
+        self._submit(text)
+
+    @Slot(str)
+    def _voice_failed(self, message: str) -> None:
+        self.message.setText(message)
+        self.input.setEnabled(True)
+        self.send_button.setEnabled(True)
+        self.mic_button.setEnabled(True)
+        self.mic_button.setText("🎤 話す")
 
     def start_local_ai(self) -> None:
         self.show_chat()
@@ -205,12 +316,14 @@ class MascotWindow(QWidget):
         self.message.setText(message)
         self.input.setEnabled(False)
         self.send_button.setEnabled(False)
+        self.mic_button.setEnabled(False)
 
     @Slot(object)
     def _runtime_finished(self, result: RuntimeResult) -> None:
         self.message.setText(result.message)
         self.input.setEnabled(True)
         self.send_button.setEnabled(True)
+        self.mic_button.setEnabled(True)
         self.input.setFocus()
         self.adjustSize()
 
@@ -220,8 +333,11 @@ class MascotWindow(QWidget):
         self.message.setText(reply.text + suffix)
         self.input.setEnabled(True)
         self.send_button.setEnabled(True)
+        self.mic_button.setEnabled(True)
         self.input.setFocus()
         self.adjustSize()
+        if self.config.tts_enabled:
+            self._threads.start(SpeechWorker(self.voice, reply.text))
 
     def _toggle_visible(self) -> None:
         self.hide() if self.isVisible() else self.show_chat()

@@ -8,6 +8,7 @@ from maidchan.assistant import LocalAssistant
 from maidchan.config import AppConfig
 from maidchan.ollama_runtime import OllamaRuntime
 from maidchan.ui import MascotWindow
+from maidchan.voice import VoiceServices
 
 
 def main() -> int:
@@ -17,8 +18,10 @@ def main() -> int:
     config = AppConfig.load()
     assistant = LocalAssistant(config)
     runtime = OllamaRuntime(config, assistant.client)
+    voice = VoiceServices(config)
     app.aboutToQuit.connect(runtime.stop_if_owned)
-    window = MascotWindow(config, assistant, runtime)
+    app.aboutToQuit.connect(voice.close)
+    window = MascotWindow(config, assistant, runtime, voice)
     window.show()
     return app.exec()
 
