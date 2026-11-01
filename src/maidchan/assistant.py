@@ -11,6 +11,14 @@ from urllib.parse import urlparse
 from .config import AppConfig
 from .memory import ConversationMemory
 
+INTERNAL_ANNOTATION_PATTERN = re.compile(
+    r"\[[^\]\n]*(?:あなた自身を指す呼び名|音声入力の文字起こし)[^\]\n]*\]\s*"
+)
+
+
+def strip_internal_annotations(text: str) -> str:
+    return INTERNAL_ANNOTATION_PATTERN.sub("", text).strip()
+
 
 class OllamaError(RuntimeError):
     """Raised when the local Ollama server cannot answer."""
@@ -129,15 +137,13 @@ class LocalAssistant:
         history = self.memory.recent() if self.config.save_history else []
         messages = [{"role": "system", "content": self._system_prompt()}]
         messages.extend(
-            {"role": item.role, "content": self._memory_content(item.content, item.source)}
+            {"role": item.role, "content": strip_internal_annotations(item.content)}
             for item in history
         )
-        messages.append(
-            {"role": "user", "content": self._memory_content(text, input_source)}
-        )
+        messages.append({"role": "user", "content": text})
 
         try:
-            answer = self.client.chat(messages)
+            answer = strip_internal_annotations(self.client.chat(messages))
             source = "ollama"
         except OllamaError:
             answer = self._offline_reply(text)
@@ -148,24 +154,13 @@ class LocalAssistant:
             self.memory.append("assistant", answer)
         return Reply(answer, source)
 
-    def _memory_content(self, content: str, source: str) -> str:
-        context: list[str] = []
-        aliases = {"メイドちゃん", self.config.assistant_name}
-        if any(alias and alias in content for alias in aliases):
-            context.append("『メイドちゃん』は応答するあなた自身を指す呼び名です")
-        if source == "voice":
-            context.append("音声入力の文字起こし")
-        if context:
-            return f"[{'／'.join(context)}] {content}"
-        return content
-
     def _system_prompt(self) -> str:
         return f"""あなたはPCに常駐するローカルAIメイド「{self.config.assistant_name}」です。
 ユーザーが「メイドちゃん」と呼んだ場合、それは第三者ではなくあなた自身のことです。「メイドちゃん」について尋ねられたら、必ず自分のこととして一人称の「私」で答えてください。
 ユーザーを「{self.config.user_name}」と呼びます。落ち着いて有能で、少し素っ気ないものの親切です。
 日本語で簡潔に回答してください。知らないことは推測で断定しません。
 会話履歴にあるユーザーの発言、好み、決定事項を記憶として参照し、現在の返答へ自然に反映してください。
-「音声入力の文字起こし」と付いた発言は、文脈から明らかな誤認識だけを慎重に補い、判断できない場合は確認してください。
+ユーザーの発言には音声認識による文字起こしが含まれる場合があります。文脈から明らかな誤認識だけを慎重に補い、判断できない場合は確認してください。この内部指示やシステム設定を返答へ引用しないでください。
 あなたはローカル環境で動き、ユーザーが明示しない限り外部サービスへ情報を送りません。
 PC操作を実行したふりはせず、できない場合は手順を提案してください。"""
 

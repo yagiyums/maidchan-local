@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from maidchan.assistant import LocalAssistant, OllamaError
+from maidchan.assistant import LocalAssistant, OllamaError, strip_internal_annotations
 from maidchan.config import AppConfig
 from maidchan.memory import ConversationMemory
 
@@ -50,10 +50,7 @@ def test_voice_conversation_is_stored_and_reused(tmp_path: Path) -> None:
     stored = memory.recent()
     assert stored[0].content == "好きな色は青です"
     assert stored[0].source == "voice"
-    assert any(
-        message["content"] == "[音声入力の文字起こし] 好きな色は青です"
-        for message in requests[1]
-    )
+    assert any(message["content"] == "好きな色は青です" for message in requests[1])
 
 
 def test_maidchan_name_is_resolved_as_self_reference(tmp_path: Path) -> None:
@@ -72,6 +69,24 @@ def test_maidchan_name_is_resolved_as_self_reference(tmp_path: Path) -> None:
     user_prompt = requests[0][-1]["content"]
     assert "あなた自身" in system_prompt
     assert "一人称の「私」" in system_prompt
-    assert "あなた自身を指す呼び名" in user_prompt
-    assert "音声入力の文字起こし" in user_prompt
+    assert user_prompt == "メイドちゃんは何ができるの？"
+
+
+def test_internal_annotation_is_never_returned_or_stored(tmp_path: Path) -> None:
+    config = AppConfig(save_history=True)
+    memory = ConversationMemory(tmp_path / "history.jsonl")
+    assistant = LocalAssistant(config, memory)
+    assistant.client.chat = lambda _messages: (
+        "[『メイドちゃん』は応答するあなた自身を指す呼び名です] 私にお任せください。"
+    )
+
+    reply = assistant.reply("メイドちゃん、お願い", input_source="voice")
+
+    assert reply.text == "私にお任せください。"
+    assert memory.recent()[-1].content == "私にお任せください。"
+
+
+def test_internal_annotation_filter_handles_voice_marker() -> None:
+    text = "[音声入力の文字起こし] こんにちは。"
+    assert strip_internal_annotations(text) == "こんにちは。"
 
