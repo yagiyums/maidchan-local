@@ -4,20 +4,15 @@ from maidchan.config import AppConfig
 from maidchan.voice import (
     ContinuousMicrophoneListener,
     EnergyVoiceDetector,
-    SpeechModelManager,
+    OfflineSpeechRecognizer,
     VoicevoxRuntime,
     amplify_pcm16,
     apply_voicevox_settings,
+    correct_voice_transcript,
     pcm16_rms,
     prepare_audio_for_recognition,
     sanitize_for_speech,
 )
-
-
-def test_existing_speech_model_is_reused(tmp_path) -> None:
-    manager = SpeechModelManager(tmp_path)
-    manager.model_path.mkdir(parents=True)
-    assert manager.ensure_model() == manager.model_path
 
 
 def test_sanitize_for_speech_removes_markup_and_urls() -> None:
@@ -27,6 +22,47 @@ def test_sanitize_for_speech_removes_markup_and_urls() -> None:
     assert "`" not in result
     assert "https" not in result
     assert "リンク" in result
+
+
+def test_voice_transcript_corrects_maidchan_name_at_start() -> None:
+    assert correct_voice_transcript("姉 ちゃん 今日 は 何 する") == (
+        "メイドちゃん 今日 は 何 する"
+    )
+    assert correct_voice_transcript("ねえ 姉ちゃん、聞いて") == (
+        "ねえ メイドちゃん、聞いて"
+    )
+
+
+def test_voice_transcript_preserves_actual_older_sister_reference() -> None:
+    assert correct_voice_transcript("私の姉ちゃんは元気です") == "私の姉ちゃんは元気です"
+
+
+def test_voice_transcript_normalizes_space_in_correct_name() -> None:
+    assert correct_voice_transcript("メイド ちゃん おはよう") == (
+        "メイドちゃん おはよう"
+    )
+
+
+def test_whisper_transcription_uses_japanese_and_maidchan_prompt() -> None:
+    calls = {}
+
+    class Segment:
+        text = " 姉ちゃん、おはよう"
+
+    class FakeModel:
+        def transcribe(self, samples, **kwargs):
+            calls["sample_count"] = len(samples)
+            calls.update(kwargs)
+            return iter([Segment()]), object()
+
+    recognizer = OfflineSpeechRecognizer(AppConfig())
+    recognizer._model = FakeModel()
+    audio = array("h", [1200, -1200] * 1600).tobytes()
+
+    assert recognizer.transcribe(audio, 16000) == "メイドちゃん、おはよう"
+    assert calls["sample_count"] == 3200
+    assert calls["language"] == "ja"
+    assert calls["initial_prompt"] == "メイドちゃん、"
 
 
 def test_voicevox_query_settings_are_applied() -> None:

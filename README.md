@@ -13,7 +13,7 @@ Windowsデスクトップに常駐する、ローカル完結型のパーソナ�
 - タスクトレイ常駐
 - Ollama経由の日本語会話（既定: `qwen2.5:3b`）
 - 起動時にOllamaを自動検出・自動起動し、初回のみモデルを自動取得
-- マイクの発話を自動検出するハンズフリー日本語音声入力（Vosk）
+- マイクの発話を自動検出するハンズフリー高精度日本語音声入力（faster-whisper）
 - メイドちゃんの応答読み上げ（VOICEVOX、Windows音声フォールバック）
 - `%APPDATA%\MaidchanLocal` だけに保存される設定と会話履歴
 - Ollama未接続時の完全オフライン応答
@@ -68,6 +68,11 @@ Ollamaもモデルもローカルで動作します。初回モデル取得時�
   "auto_pull_model": true,
   "voice_input_enabled": true,
   "microphone_gain": 3.0,
+  "recognition_model": "small",
+  "recognition_device": "cpu",
+  "recognition_compute_type": "int8",
+  "recognition_cpu_threads": 8,
+  "recognition_beam_size": 5,
   "recognition_target_rms": 4000,
   "vad_min_rms": 500,
   "vad_noise_multiplier": 2.2,
@@ -108,7 +113,7 @@ Python環境を含むWindowsアプリを生成する場合は次を実行しま�
 
 アプリが直接通信するのは設定したOllamaエンドポイントだけです。既定値は同じPCの `127.0.0.1:11434` です。テレメトリ、広告SDK、クラウドAI SDKは含みません。キーボード入力と音声入力の文字起こしは `%APPDATA%\MaidchanLocal\history.jsonl` に保存され、直近60メッセージをローカルAIの記憶として使います。音声入力には入力元情報も保存されます。会話履歴を残さない場合は `save_history` を `false` にするか、`/clear` で削除してください。
 
-マイク音声はメモリ上で処理し、録音ファイルとして保存しません。日本語文字起こしもPC内のVoskモデルで行い、音声をクラウドへ送信しません。入力はマイク感度で増幅した後、DC成分を除去し、16kHzへ変換して発話音量を自動正規化します。会話UIで入力レベルを確認しながらマイク感度を100〜600%で調整できます。メイドちゃんの読み上げ中とAI処理中はマイク待受を一時停止し、自己応答ループを防ぎます。応答後は自動的に待受へ戻り、処理スレッドが停止していた場合も自動再起動します。常時待受を止める場合はタスクトレイからOFFにするか、`voice_input_enabled` を `false` にしてください。
+マイク音声はメモリ上で処理し、録音ファイルとして保存しません。日本語文字起こしもPC内のfaster-whisperモデルで行い、音声をクラウドへ送信しません。初回の音声認識時だけ多言語版Whisper `small` モデルを取得し、以後は `%APPDATA%\MaidchanLocal\models` に保存したモデルを使います。入力はマイク感度で増幅した後、DC成分を除去し、16kHzへ変換して発話音量を自動正規化します。会話UIで入力レベルを確認しながらマイク感度を100〜600%で調整できます。メイドちゃんの読み上げ中とAI処理中はマイク待受を一時停止し、自己応答ループを防ぎます。応答後は自動的に待受へ戻り、処理スレッドが停止していた場合も自動再起動します。常時待受を止める場合はタスクトレイからOFFにするか、`voice_input_enabled` を `false` にしてください。
 
 応答音声はローカルのVOICEVOX Engineへ送られ、`audio_query` と `synthesis` APIで生成されます。既定音声は「ユーレイちゃん・甘々」です。利用時のクレジットは **VOICEVOX:ユーレイちゃん** です。VOICEVOXが利用できない場合のみ、Windowsの日本語音声へ自動的に切り替わります。
 

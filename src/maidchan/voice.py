@@ -6,30 +6,31 @@ import math
 import os
 import queue
 import re
-import shutil
 import subprocess
-import tempfile
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import zipfile
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import sounddevice as sd
-from vosk import KaldiRecognizer, Model, SetLogLevel
+from faster_whisper import WhisperModel
 
 from .config import AppConfig, app_data_dir
 
-SPEECH_MODEL_NAME = "vosk-model-small-ja-0.22"
-SPEECH_MODEL_URL = (
-    "https://alphacephei.com/vosk/models/vosk-model-small-ja-0.22.zip"
-)
 ProgressCallback = Callable[[str], None]
+
+
+VOICE_ASSISTANT_NAME_PATTERN = re.compile(
+    r"(?P<prefix>^|[、。！？!?]|(?:ねえ|ねぇ|なあ|なぁ|もしもし)[、,\s]*)"
+    r"\s*姉\s*ちゃん"
+)
 
 
 class VoiceError(RuntimeError):
@@ -41,50 +42,6 @@ class VoiceRuntimeResult:
     ready: bool
     message: str
     started_engine: bool = False
-
-
-class SpeechModelManager:
-    def __init__(self, root: Path | None = None) -> None:
-        self.root = root or app_data_dir() / "models"
-        self.model_path = self.root / SPEECH_MODEL_NAME
-
-    def ensure_model(self, progress: ProgressCallback | None = None) -> Path:
-        if self.model_path.is_dir():
-            return self.model_path
-        notify = progress or (lambda _message: None)
-        self.root.mkdir(parents=True, exist_ok=True)
-        archive_path = self.root / f"{SPEECH_MODEL_NAME}.zip.part"
-        last_percent = -10
-
-        def report(block_count: int, block_size: int, total_size: int) -> None:
-            nonlocal last_percent
-            if total_size <= 0:
-                return
-            percent = min(100, int(block_count * block_size * 100 / total_size))
-            if percent >= last_percent + 10:
-                last_percent = percent
-                notify(f"日本語音声認識モデルを準備中… {percent}%")
-
-        notify("日本語音声認識モデルをダウンロード中…")
-        try:
-            urllib.request.urlretrieve(SPEECH_MODEL_URL, archive_path, report)
-            with tempfile.TemporaryDirectory(dir=self.root) as temp_name:
-                temp_root = Path(temp_name).resolve()
-                with zipfile.ZipFile(archive_path) as archive:
-                    for member in archive.infolist():
-                        destination = (temp_root / member.filename).resolve()
-                        if not destination.is_relative_to(temp_root):
-                            raise VoiceError("音声モデルのアーカイブが不正です。")
-                    archive.extractall(temp_root)
-                extracted = temp_root / SPEECH_MODEL_NAME
-                if not extracted.is_dir():
-                    raise VoiceError("音声モデルを展開できませんでした。")
-                shutil.move(str(extracted), str(self.model_path))
-        except (OSError, urllib.error.URLError, zipfile.BadZipFile) as exc:
-            raise VoiceError(f"音声認識モデルの準備に失敗しました: {exc}") from exc
-        finally:
-            archive_path.unlink(missing_ok=True)
-        return self.model_path
 
 
 class MicrophoneRecorder:
@@ -190,6 +147,14 @@ def prepare_audio_for_recognition(
     speech_rms = sum(nonzero_levels[-top_count:]) / top_count
     gain = max(0.25, min(max_gain, target_rms / speech_rms))
     return audioop.mul(centered, 2, gain), target_rate
+
+
+def correct_voice_transcript(text: str, assistant_name: str = "メイドちゃん") -> str:
+    """Correct common recognition errors when the mascot is being addressed."""
+    normalized = re.sub(r"メイド\s+ちゃん", assistant_name, text.strip())
+    return VOICE_ASSISTANT_NAME_PATTERN.sub(
+        lambda match: f"{match.group('prefix')}{assistant_name}", normalized
+    )
 
 
 class EnergyVoiceDetector:
@@ -399,12 +364,10 @@ class ContinuousMicrophoneListener:
 class OfflineSpeechRecognizer:
     def __init__(
         self,
-        model_manager: SpeechModelManager | None = None,
         config: AppConfig | None = None,
     ) -> None:
-        self.model_manager = model_manager or SpeechModelManager()
         self.config = config or AppConfig()
-        self._model: Model | None = None
+        self._model: Any | None = None
         self._model_lock = threading.Lock()
 
     def transcribe(
@@ -415,31 +378,55 @@ class OfflineSpeechRecognizer:
     ) -> str:
         if not audio:
             return ""
-        model = self._load_model(progress)
+        notify = progress or (lambda _message: None)
+        model = self._load_model(notify)
         prepared_audio, recognition_rate = prepare_audio_for_recognition(
             audio,
             sample_rate,
             target_rms=self.config.recognition_target_rms,
             max_gain=self.config.recognition_max_gain,
         )
+        if recognition_rate != 16000:
+            raise VoiceError("音声を16kHzへ変換できませんでした。")
+        samples = np.frombuffer(prepared_audio, dtype=np.int16).astype(np.float32)
+        samples /= 32768.0
+        notify("Whisperで音声を認識中…")
         try:
-            recognizer = KaldiRecognizer(model, recognition_rate)
-            for offset in range(0, len(prepared_audio), 16000):
-                recognizer.AcceptWaveform(prepared_audio[offset : offset + 16000])
-            result = json.loads(recognizer.FinalResult())
-        except (ValueError, RuntimeError, json.JSONDecodeError) as exc:
+            segments, _info = model.transcribe(
+                samples,
+                language="ja",
+                task="transcribe",
+                beam_size=self.config.recognition_beam_size,
+                condition_on_previous_text=False,
+                initial_prompt=f"{self.config.assistant_name}、",
+                vad_filter=False,
+            )
+            text = "".join(segment.text for segment in segments).strip()
+        except (OSError, ValueError, RuntimeError) as exc:
             raise VoiceError(f"音声を認識できませんでした: {exc}") from exc
-        return str(result.get("text", "")).strip()
+        return correct_voice_transcript(
+            text, self.config.assistant_name
+        )
 
-    def _load_model(self, progress: ProgressCallback | None = None) -> Model:
+    def _load_model(self, progress: ProgressCallback | None = None) -> Any:
         with self._model_lock:
             if self._model is None:
-                model_path = self.model_manager.ensure_model(progress)
-                SetLogLevel(-1)
+                notify = progress or (lambda _message: None)
+                notify("高精度音声認識モデルを準備中…（初回のみ取得）")
+                model_root = app_data_dir() / "models" / "faster-whisper"
+                model_root.mkdir(parents=True, exist_ok=True)
                 try:
-                    self._model = Model(str(model_path))
-                except RuntimeError as exc:
-                    raise VoiceError(f"音声認識モデルを読み込めませんでした: {exc}") from exc
+                    self._model = WhisperModel(
+                        self.config.recognition_model,
+                        device=self.config.recognition_device,
+                        compute_type=self.config.recognition_compute_type,
+                        cpu_threads=self.config.recognition_cpu_threads,
+                        download_root=str(model_root),
+                    )
+                except (OSError, ValueError, RuntimeError) as exc:
+                    raise VoiceError(
+                        f"高精度音声認識モデルを読み込めませんでした: {exc}"
+                    ) from exc
             return self._model
 
 

@@ -14,7 +14,10 @@ Set-Location $ProjectRoot
     --name "MaidchanLocal" `
     --collect-data "maidchan" `
     --collect-all "comtypes" `
-    --collect-all "vosk" `
+    --collect-all "faster_whisper" `
+    --collect-all "ctranslate2" `
+    --collect-all "av" `
+    --collect-all "tokenizers" `
     --exclude-module "comtypes.test" `
     --exclude-module "PySide6.QtWebEngineCore" `
     --exclude-module "PySide6.QtWebEngineWidgets" `

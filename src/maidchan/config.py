@@ -25,6 +25,11 @@ class AppConfig:
     auto_pull_model: bool = True
     voice_input_enabled: bool = True
     microphone_gain: float = 3.0
+    recognition_model: str = "small"
+    recognition_device: str = "cpu"
+    recognition_compute_type: str = "int8"
+    recognition_cpu_threads: int = 8
+    recognition_beam_size: int = 5
     recognition_target_rms: int = 4000
     recognition_max_gain: float = 8.0
     vad_min_rms: int = 500
