@@ -70,8 +70,8 @@ Ollamaもモデルもローカルで動作します。初回モデル取得時�
   "tts_enabled": true,
   "tts_engine": "voicevox",
   "voicevox_url": "http://127.0.0.1:50021",
-  "voicevox_speaker": 0,
-  "voicevox_credit": "VOICEVOX:四国めたん",
+  "voicevox_speaker": 103,
+  "voicevox_credit": "VOICEVOX:ユーレイちゃん",
   "voicevox_speed_scale": 1.05,
   "mascot_width": 190,
   "save_history": true
@@ -102,7 +102,7 @@ Python環境を含むWindowsアプリを生成する場合は次を実行しま�
 
 マイク音声はメモリ上で処理し、録音ファイルとして保存しません。日本語文字起こしもPC内のVoskモデルで行い、音声をクラウドへ送信しません。メイドちゃんの読み上げ中とAI処理中はマイク待受を一時停止し、自己応答ループを防ぎます。常時待受を止める場合はタスクトレイからOFFにするか、`voice_input_enabled` を `false` にしてください。
 
-応答音声はローカルのVOICEVOX Engineへ送られ、`audio_query` と `synthesis` APIで生成されます。既定音声は「四国めたん・あまあま」です。利用時のクレジットは **VOICEVOX:四国めたん** です。VOICEVOXが利用できない場合のみ、Windowsの日本語音声へ自動的に切り替わります。
+応答音声はローカルのVOICEVOX Engineへ送られ、`audio_query` と `synthesis` APIで生成されます。既定音声は「ユーレイちゃん・甘々」です。利用時のクレジットは **VOICEVOX:ユーレイちゃん** です。VOICEVOXが利用できない場合のみ、Windowsの日本語音声へ自動的に切り替わります。
 
 ## ライセンス
 

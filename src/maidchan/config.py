@@ -34,8 +34,8 @@ class AppConfig:
     tts_enabled: bool = True
     tts_engine: str = "voicevox"
     voicevox_url: str = "http://127.0.0.1:50021"
-    voicevox_speaker: int = 0
-    voicevox_credit: str = "VOICEVOX:四国めたん"
+    voicevox_speaker: int = 103
+    voicevox_credit: str = "VOICEVOX:ユーレイちゃん"
     voicevox_speed_scale: float = 1.05
     voicevox_pitch_scale: float = 0.0
     voicevox_intonation_scale: float = 1.0
