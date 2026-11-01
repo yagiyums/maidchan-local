@@ -3,6 +3,7 @@ from pathlib import Path
 from maidchan.assistant import LocalAssistant, OllamaError, strip_internal_annotations
 from maidchan.config import AppConfig
 from maidchan.memory import ConversationMemory
+from maidchan.research import ResearchDocument, ResearchResult
 
 
 def make_assistant(tmp_path: Path) -> LocalAssistant:
@@ -89,4 +90,41 @@ def test_internal_annotation_is_never_returned_or_stored(tmp_path: Path) -> None
 def test_internal_annotation_filter_handles_voice_marker() -> None:
     text = "[音声入力の文字起こし] こんにちは。"
     assert strip_internal_annotations(text) == "こんにちは。"
+
+
+def test_research_context_and_source_are_added_to_answer(tmp_path: Path) -> None:
+    class FakeResearch:
+        def should_research(self, _text: str) -> bool:
+            return True
+
+        def search(self, _text: str) -> ResearchResult:
+            return ResearchResult(
+                "東京タワー",
+                (
+                    ResearchDocument(
+                        "東京タワー",
+                        "東京タワーは東京都港区にある総合電波塔です。",
+                        "https://ja.wikipedia.org/wiki/東京タワー",
+                    ),
+                ),
+            )
+
+    config = AppConfig(save_history=False)
+    assistant = LocalAssistant(
+        config,
+        ConversationMemory(tmp_path / "history.jsonl"),
+        research=FakeResearch(),  # type: ignore[arg-type]
+    )
+    requests: list[list[dict[str, str]]] = []
+
+    def chat(messages: list[dict[str, str]]) -> str:
+        requests.append(messages)
+        return "高さは333メートルです。"
+
+    assistant.client.chat = chat
+    reply = assistant.reply("東京タワーの高さを調べて")
+
+    assert reply.source == "ollama+research"
+    assert "出典:" in reply.text
+    assert any("外部参考資料" in message["content"] for message in requests[0])
 

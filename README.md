@@ -13,6 +13,7 @@ Windowsデスクトップに常駐する、ローカル完結型のパーソナ�
 - タスクトレイ常駐
 - Ollama経由の日本語会話（既定: `qwen2.5:3b`）
 - 起動時にOllamaを自動検出・自動起動し、初回のみモデルを自動取得
+- 一般知識を必要に応じてWikipediaで調べ、出典付きで回答
 - マイクの発話を自動検出するハンズフリー高精度日本語音声入力（faster-whisper）
 - メイドちゃんの応答読み上げ（VOICEVOX、Windows音声フォールバック）
 - `%APPDATA%\MaidchanLocal` だけに保存される設定と会話履歴
@@ -51,6 +52,7 @@ Ollamaもモデルもローカルで動作します。初回モデル取得時�
 - `🔊` / `🔇`: 応答の読み上げを切り替え
 - `/status`: Ollama接続状態
 - `/model`: 使用モデル
+- `/search 語句`: Wikipediaを検索して回答
 - `/clear`: 会話履歴の削除
 - `/help`: コマンド一覧
 
@@ -87,7 +89,10 @@ Ollamaもモデルもローカルで動作します。初回モデル取得時�
   "voicevox_volume_scale": 1.0,
   "mascot_width": 190,
   "save_history": true,
-  "memory_max_messages": 60
+  "memory_max_messages": 60,
+  "web_research_enabled": true,
+  "research_timeout_seconds": 10,
+  "research_max_results": 3
 }
 ```
 
@@ -111,7 +116,7 @@ Python環境を含むWindowsアプリを生成する場合は次を実行しま�
 
 ## プライバシー
 
-アプリが直接通信するのは設定したOllamaエンドポイントだけです。既定値は同じPCの `127.0.0.1:11434` です。テレメトリ、広告SDK、クラウドAI SDKは含みません。キーボード入力と音声入力の文字起こしは `%APPDATA%\MaidchanLocal\history.jsonl` に保存され、直近60メッセージをローカルAIの記憶として使います。音声入力には入力元情報も保存されます。会話履歴を残さない場合は `save_history` を `false` にするか、`/clear` で削除してください。
+アプリはローカルのOllamaに加え、一般知識の調査時だけ日本語版Wikipediaへ検索語を送信します。会話履歴やマイク音声は送信しません。ウェブ調査を使わない場合は `web_research_enabled` を `false` にしてください。テレメトリ、広告SDK、クラウドAI SDKは含みません。キーボード入力と音声入力の文字起こしは `%APPDATA%\MaidchanLocal\history.jsonl` に保存され、直近60メッセージをローカルAIの記憶として使います。音声入力には入力元情報も保存されます。会話履歴を残さない場合は `save_history` を `false` にするか、`/clear` で削除してください。
 
 マイク音声はメモリ上で処理し、録音ファイルとして保存しません。日本語文字起こしもPC内のfaster-whisperモデルで行い、音声をクラウドへ送信しません。初回の音声認識時だけ多言語版Whisper `small` モデルを取得し、以後は `%APPDATA%\MaidchanLocal\models` に保存したモデルを使います。入力はマイク感度で増幅した後、DC成分を除去し、16kHzへ変換して発話音量を自動正規化します。会話UIで入力レベルを確認しながらマイク感度を100〜600%で調整できます。メイドちゃんの読み上げ中とAI処理中はマイク待受を一時停止し、自己応答ループを防ぎます。応答後は自動的に待受へ戻り、処理スレッドが停止していた場合も自動再起動します。常時待受を止める場合はタスクトレイからOFFにするか、`voice_input_enabled` を `false` にしてください。
 

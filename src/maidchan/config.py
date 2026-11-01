@@ -60,6 +60,9 @@ class AppConfig:
     always_on_top: bool = True
     save_history: bool = True
     memory_max_messages: int = 60
+    web_research_enabled: bool = True
+    research_timeout_seconds: int = 10
+    research_max_results: int = 3
     start_x: int | None = None
     start_y: int | None = None
 
