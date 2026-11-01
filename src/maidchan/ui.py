@@ -3,7 +3,15 @@ from __future__ import annotations
 from importlib.resources import files
 
 from PySide6.QtCore import QObject, QPoint, QRunnable, QSize, Qt, QThreadPool, Signal, Slot
-from PySide6.QtGui import QAction, QCloseEvent, QIcon, QMouseEvent, QMovie, QPixmap
+from PySide6.QtGui import (
+    QAction,
+    QCloseEvent,
+    QIcon,
+    QImageReader,
+    QMouseEvent,
+    QMovie,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -193,15 +201,15 @@ class MascotWindow(QWidget):
         self.mascot = QLabel()
         self.mascot.setAlignment(Qt.AlignmentFlag.AlignCenter)
         animation_path = files("maidchan").joinpath("assets/maid_idle.gif")
+        source_size = QImageReader(str(animation_path)).size()
         self._mascot_movie = QMovie(str(animation_path))
-        self._mascot_movie.setCacheMode(QMovie.CacheMode.CacheAll)
-        if self._mascot_movie.isValid() and self._mascot_movie.jumpToFrame(0):
-            source_size = self._mascot_movie.currentImage().size()
+        if self._mascot_movie.isValid() and source_size.isValid():
             height = round(
                 self.config.mascot_width * source_size.height() / source_size.width()
             )
             scaled_size = QSize(self.config.mascot_width, height)
             self._mascot_movie.setScaledSize(scaled_size)
+            self._mascot_movie.setCacheMode(QMovie.CacheMode.CacheAll)
             self.mascot.setFixedSize(scaled_size)
             self.mascot.setMovie(self._mascot_movie)
             self._mascot_movie.start()

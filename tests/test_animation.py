@@ -7,9 +7,20 @@ def test_idle_animation_is_transparent_looping_gif() -> None:
     path = files("maidchan").joinpath("assets/maid_idle.gif")
     with Image.open(path) as animation:
         assert animation.format == "GIF"
-        assert animation.n_frames == 8
+        assert animation.n_frames == 21
         assert animation.info["loop"] == 0
         animation.seek(0)
         assert animation.info.get("transparency") is not None
         first_frame = animation.convert("RGBA")
         assert first_frame.getpixel((0, 0))[3] == 0
+
+        bottoms: list[int] = []
+        heights: list[int] = []
+        for index in range(animation.n_frames):
+            animation.seek(index)
+            bounds = animation.convert("RGBA").getchannel("A").getbbox()
+            assert bounds is not None
+            bottoms.append(bounds[3])
+            heights.append(bounds[3] - bounds[1])
+        assert max(bottoms) - min(bottoms) <= 1
+        assert max(heights) - min(heights) <= 2
