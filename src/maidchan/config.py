@@ -24,6 +24,13 @@ class AppConfig:
     auto_start_ollama: bool = True
     auto_pull_model: bool = True
     voice_input_enabled: bool = True
+    vad_min_rms: int = 500
+    vad_noise_multiplier: float = 3.0
+    vad_silence_ms: int = 900
+    vad_min_speech_ms: int = 300
+    vad_max_speech_seconds: int = 20
+    vad_preroll_ms: int = 300
+    vad_block_ms: int = 50
     tts_enabled: bool = True
     tts_engine: str = "voicevox"
     voicevox_url: str = "http://127.0.0.1:50021"

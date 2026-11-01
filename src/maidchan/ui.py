@@ -63,6 +63,12 @@ class TranscriptionSignals(QObject):
     failed = Signal(str)
 
 
+class ListeningSignals(QObject):
+    utterance = Signal(bytes, int)
+    status = Signal(str)
+    failed = Signal(str)
+
+
 class TranscriptionWorker(QRunnable):
     def __init__(self, voice: VoiceServices, audio: bytes, sample_rate: int) -> None:
         super().__init__()
@@ -87,6 +93,7 @@ class SpeechWorker(QRunnable):
         super().__init__()
         self.voice = voice
         self.text = text
+        self.signals = WorkerSignals()
 
     @Slot()
     def run(self) -> None:
@@ -94,6 +101,7 @@ class SpeechWorker(QRunnable):
             self.voice.synthesizer.speak(self.text)
         except VoiceError:
             pass
+        self.signals.finished.emit(None)
 
 
 class VoiceRuntimeWorker(QRunnable):
@@ -121,6 +129,15 @@ class MascotWindow(QWidget):
         self.assistant = assistant
         self.runtime = runtime
         self.voice = voice
+        self._listen_signals = ListeningSignals()
+        self._listen_signals.utterance.connect(self._auto_utterance)
+        self._listen_signals.status.connect(self._set_mic_status)
+        self._listen_signals.failed.connect(self._voice_failed)
+        self.voice.listener.set_callbacks(
+            on_utterance=self._listen_signals.utterance.emit,
+            on_status=self._listen_signals.status.emit,
+            on_error=self._listen_signals.failed.emit,
+        )
         self._drag_offset: QPoint | None = None
         self._threads = QThreadPool.globalInstance()
         self._setup_window()
@@ -158,10 +175,8 @@ class MascotWindow(QWidget):
         self.input.returnPressed.connect(self._send)
         self.send_button = QPushButton("送信")
         self.send_button.clicked.connect(self._send)
-        self.mic_button = QPushButton("🎤 話す")
-        self.mic_button.setToolTip("クリックで録音開始、もう一度クリックで送信")
-        self.mic_button.clicked.connect(self._toggle_recording)
-        self.mic_button.setVisible(self.config.voice_input_enabled)
+        self.mic_status = QLabel("🎤 準備中")
+        self.mic_status.setToolTip("発話を自動検出して送信します")
         self.speaker_button = QPushButton("🔊" if self.config.tts_enabled else "🔇")
         self.speaker_button.setToolTip(
             f"応答音声のオン・オフ（{self.config.voicevox_credit}）"
@@ -169,7 +184,7 @@ class MascotWindow(QWidget):
         self.speaker_button.clicked.connect(self._toggle_speech)
         input_row.addWidget(self.input, 1)
         input_row.addWidget(self.send_button)
-        input_row.addWidget(self.mic_button)
+        input_row.addWidget(self.mic_status)
         input_row.addWidget(self.speaker_button)
         bubble_layout.addLayout(input_row)
         self.bubble.hide()
@@ -216,6 +231,10 @@ class MascotWindow(QWidget):
         status.triggered.connect(lambda: self._submit("/status"))
         start_ai = QAction("ローカルAIを起動", self)
         start_ai.triggered.connect(self.start_local_ai)
+        self.listen_action = QAction("マイク自動待受", self)
+        self.listen_action.setCheckable(True)
+        self.listen_action.setChecked(self.config.voice_input_enabled)
+        self.listen_action.toggled.connect(self._set_hands_free)
         hide = QAction("隠す / 表示", self)
         hide.triggered.connect(self._toggle_visible)
         quit_action = QAction("終了", self)
@@ -223,6 +242,7 @@ class MascotWindow(QWidget):
         menu.addAction(talk)
         menu.addAction(status)
         menu.addAction(start_ai)
+        menu.addAction(self.listen_action)
         menu.addSeparator()
         menu.addAction(hide)
         menu.addAction(quit_action)
@@ -252,39 +272,42 @@ class MascotWindow(QWidget):
             self._submit(text)
 
     def _submit(self, text: str) -> None:
+        self.voice.listener.pause()
         self.show_chat()
         self.message.setText("考え中…")
         self.input.setEnabled(False)
         self.send_button.setEnabled(False)
-        self.mic_button.setEnabled(False)
         worker = ReplyWorker(self.assistant, text)
         worker.signals.finished.connect(self._show_reply)
         self._threads.start(worker)
 
-    def _toggle_recording(self) -> None:
-        if self.voice.recorder.is_recording:
+    @Slot(bytes, int)
+    def _auto_utterance(self, audio: bytes, sample_rate: int) -> None:
+        self.show_chat()
+        self._show_voice_progress("音声を認識中…")
+        worker = TranscriptionWorker(self.voice, audio, sample_rate)
+        worker.signals.progress.connect(self._show_voice_progress)
+        worker.signals.finished.connect(self._transcription_finished)
+        worker.signals.failed.connect(self._voice_failed)
+        self._threads.start(worker)
+
+    @Slot(str)
+    def _set_mic_status(self, status: str) -> None:
+        self.mic_status.setText(status)
+
+    @Slot(bool)
+    def _set_hands_free(self, enabled: bool) -> None:
+        self.config.voice_input_enabled = enabled
+        self.config.save()
+        if enabled:
             try:
-                audio, sample_rate = self.voice.recorder.stop()
+                self.voice.listener.start()
             except VoiceError as exc:
                 self._voice_failed(str(exc))
-                return
-            self.mic_button.setText("🎤 話す")
-            self._show_voice_progress("音声を認識中…")
-            worker = TranscriptionWorker(self.voice, audio, sample_rate)
-            worker.signals.progress.connect(self._show_voice_progress)
-            worker.signals.finished.connect(self._transcription_finished)
-            worker.signals.failed.connect(self._voice_failed)
-            self._threads.start(worker)
-            return
-        try:
-            self.voice.recorder.start()
-        except VoiceError as exc:
-            self._voice_failed(str(exc))
-            return
-        self.mic_button.setText("■ 停止")
-        self.message.setText("録音中…\n話し終わったら「停止」を押してください。")
-        self.input.setEnabled(False)
-        self.send_button.setEnabled(False)
+                self.listen_action.setChecked(False)
+        else:
+            self.voice.listener.stop()
+            self.mic_status.setText("🎤 停止中")
 
     def _toggle_speech(self) -> None:
         self.config.tts_enabled = not self.config.tts_enabled
@@ -296,15 +319,14 @@ class MascotWindow(QWidget):
         self.message.setText(message)
         self.input.setEnabled(False)
         self.send_button.setEnabled(False)
-        self.mic_button.setEnabled(False)
 
     @Slot(str)
     def _transcription_finished(self, text: str) -> None:
         self.input.setEnabled(True)
         self.send_button.setEnabled(True)
-        self.mic_button.setEnabled(True)
         if not text:
             self.message.setText("音声を聞き取れませんでした。もう一度お試しください。")
+            self._resume_listening()
             return
         self.input.setText(text)
         self._submit(text)
@@ -314,8 +336,7 @@ class MascotWindow(QWidget):
         self.message.setText(message)
         self.input.setEnabled(True)
         self.send_button.setEnabled(True)
-        self.mic_button.setEnabled(True)
-        self.mic_button.setText("🎤 話す")
+        self._resume_listening()
 
     def start_local_ai(self) -> None:
         self.show_chat()
@@ -330,7 +351,6 @@ class MascotWindow(QWidget):
         self.message.setText(message)
         self.input.setEnabled(False)
         self.send_button.setEnabled(False)
-        self.mic_button.setEnabled(False)
 
     @Slot(object)
     def _runtime_finished(self, result: RuntimeResult) -> None:
@@ -346,9 +366,12 @@ class MascotWindow(QWidget):
         self.message.setText(f"{self._local_ai_status}\n{result.message}")
         self.input.setEnabled(True)
         self.send_button.setEnabled(True)
-        self.mic_button.setEnabled(True)
         self.input.setFocus()
         self.adjustSize()
+        if self.config.voice_input_enabled:
+            self._set_hands_free(True)
+        else:
+            self.mic_status.setText("🎤 停止中")
 
     @Slot(object)
     def _show_reply(self, reply: Reply) -> None:
@@ -356,11 +379,25 @@ class MascotWindow(QWidget):
         self.message.setText(reply.text + suffix)
         self.input.setEnabled(True)
         self.send_button.setEnabled(True)
-        self.mic_button.setEnabled(True)
         self.input.setFocus()
         self.adjustSize()
         if self.config.tts_enabled:
-            self._threads.start(SpeechWorker(self.voice, reply.text))
+            worker = SpeechWorker(self.voice, reply.text)
+            worker.signals.finished.connect(self._speech_finished)
+            self._threads.start(worker)
+        else:
+            self._resume_listening()
+
+    @Slot(object)
+    def _speech_finished(self, _result: object) -> None:
+        self._resume_listening()
+
+    def _resume_listening(self) -> None:
+        if self.config.voice_input_enabled and self.voice.listener.is_running:
+            try:
+                self.voice.listener.resume()
+            except VoiceError as exc:
+                self._voice_failed(str(exc))
 
     def _toggle_visible(self) -> None:
         self.hide() if self.isVisible() else self.show_chat()

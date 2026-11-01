@@ -1,5 +1,8 @@
+from array import array
+
 from maidchan.config import AppConfig
 from maidchan.voice import (
+    EnergyVoiceDetector,
     SpeechModelManager,
     VoicevoxRuntime,
     apply_voicevox_settings,
@@ -43,3 +46,28 @@ def test_voicevox_runtime_uses_explicit_engine_path(tmp_path, monkeypatch) -> No
     executable.write_bytes(b"test")
     monkeypatch.setenv("MAIDCHAN_VOICEVOX_ENGINE_PATH", str(executable))
     assert VoicevoxRuntime(AppConfig()).find_executable() == executable
+
+
+def test_energy_detector_emits_after_speech_and_silence() -> None:
+    config = AppConfig(
+        vad_min_rms=400,
+        vad_noise_multiplier=3.0,
+        vad_block_ms=50,
+        vad_min_speech_ms=300,
+        vad_silence_ms=300,
+        vad_preroll_ms=100,
+    )
+    detector = EnergyVoiceDetector(16000, config)
+    silence = array("h", [20] * 800).tobytes()
+    speech = array("h", [2000] * 800).tobytes()
+    for _ in range(5):
+        assert detector.accept(silence) is None
+    for _ in range(8):
+        assert detector.accept(speech) is None
+    result = None
+    for _ in range(8):
+        result = detector.accept(silence)
+        if result is not None:
+            break
+    assert result is not None
+    assert len(result) > len(speech)

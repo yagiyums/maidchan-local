@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import queue
 import re
 import shutil
 import subprocess
@@ -12,6 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -134,6 +137,202 @@ class MicrophoneRecorder:
         if status:
             return
         self._chunks.append(bytes(indata))
+
+
+def pcm16_rms(audio: bytes) -> float:
+    if len(audio) < 2:
+        return 0.0
+    samples = memoryview(audio[: len(audio) // 2 * 2]).cast("h")
+    return math.sqrt(sum(sample * sample for sample in samples) / len(samples))
+
+
+class EnergyVoiceDetector:
+    def __init__(self, sample_rate: int, config: AppConfig) -> None:
+        self.sample_rate = sample_rate
+        self.config = config
+        self.silence_blocks = max(1, math.ceil(config.vad_silence_ms / config.vad_block_ms))
+        self.minimum_speech_blocks = max(
+            1, math.ceil(config.vad_min_speech_ms / config.vad_block_ms)
+        )
+        self.maximum_blocks = max(
+            1, math.ceil(config.vad_max_speech_seconds * 1000 / config.vad_block_ms)
+        )
+        preroll_blocks = max(1, math.ceil(config.vad_preroll_ms / config.vad_block_ms))
+        self.preroll: deque[bytes] = deque(maxlen=preroll_blocks)
+        self.noise_floor = max(50.0, config.vad_min_rms / 2)
+        self.reset()
+
+    def reset(self) -> None:
+        self.speaking = False
+        self.active_streak = 0
+        self.active_blocks = 0
+        self.trailing_silence = 0
+        self.current: list[bytes] = []
+        self.preroll.clear()
+
+    def accept(self, audio: bytes) -> bytes | None:
+        rms = pcm16_rms(audio)
+        threshold = max(
+            float(self.config.vad_min_rms),
+            self.noise_floor * self.config.vad_noise_multiplier,
+        )
+        active = rms >= threshold
+
+        if not self.speaking:
+            self.preroll.append(audio)
+            if active:
+                self.active_streak += 1
+                if self.active_streak >= 2:
+                    self.speaking = True
+                    self.active_blocks = self.active_streak
+                    self.current = list(self.preroll)
+            else:
+                self.active_streak = 0
+                self.noise_floor = self.noise_floor * 0.95 + rms * 0.05
+            return None
+
+        self.current.append(audio)
+        if active:
+            self.active_blocks += 1
+            self.trailing_silence = 0
+        else:
+            self.trailing_silence += 1
+
+        if len(self.current) >= self.maximum_blocks:
+            return self._finish()
+        if self.trailing_silence >= self.silence_blocks:
+            return self._finish()
+        return None
+
+    def _finish(self) -> bytes | None:
+        result = b"".join(self.current) if self.active_blocks >= self.minimum_speech_blocks else None
+        self.reset()
+        return result
+
+
+class ContinuousMicrophoneListener:
+    def __init__(self, config: AppConfig) -> None:
+        self.config = config
+        self.sample_rate = 16000
+        self._stream: sd.RawInputStream | None = None
+        self._thread: threading.Thread | None = None
+        self._queue: queue.Queue[bytes] = queue.Queue(maxsize=200)
+        self._stop_event = threading.Event()
+        self._paused = threading.Event()
+        self._detector: EnergyVoiceDetector | None = None
+        self.on_utterance: Callable[[bytes, int], None] = lambda _audio, _rate: None
+        self.on_status: Callable[[str], None] = lambda _message: None
+        self.on_error: Callable[[str], None] = lambda _message: None
+
+    @property
+    def is_running(self) -> bool:
+        return self._stream is not None
+
+    @property
+    def is_paused(self) -> bool:
+        return self._paused.is_set()
+
+    def set_callbacks(
+        self,
+        *,
+        on_utterance: Callable[[bytes, int], None],
+        on_status: Callable[[str], None],
+        on_error: Callable[[str], None],
+    ) -> None:
+        self.on_utterance = on_utterance
+        self.on_status = on_status
+        self.on_error = on_error
+
+    def start(self) -> None:
+        if self.is_running:
+            self.resume()
+            return
+        try:
+            device_info = sd.query_devices(self.config.microphone_device, "input")
+            self.sample_rate = int(device_info["default_samplerate"])
+            blocksize = max(1, int(self.sample_rate * self.config.vad_block_ms / 1000))
+            self._detector = EnergyVoiceDetector(self.sample_rate, self.config)
+            self._stop_event.clear()
+            self._paused.clear()
+            self._stream = sd.RawInputStream(
+                samplerate=self.sample_rate,
+                blocksize=blocksize,
+                device=self.config.microphone_device,
+                dtype="int16",
+                channels=1,
+                callback=self._audio_callback,
+            )
+            self._stream.start()
+            self._thread = threading.Thread(
+                target=self._process_audio, name="maidchan-listener", daemon=True
+            )
+            self._thread.start()
+            self.on_status("🎤 自動待受中")
+        except Exception as exc:
+            self._stream = None
+            raise VoiceError(f"マイクの自動待受を開始できませんでした: {exc}") from exc
+
+    def pause(self) -> None:
+        self._paused.set()
+
+    def resume(self) -> None:
+        if not self.is_running:
+            self.start()
+            return
+        self._drain_queue()
+        if self._detector is not None:
+            self._detector.reset()
+        self._paused.clear()
+        self.on_status("🎤 自動待受中")
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        stream = self._stream
+        self._stream = None
+        if stream is not None:
+            try:
+                stream.stop()
+                stream.close()
+            except (sd.PortAudioError, OSError):
+                self.on_error("マイクを正常に停止できませんでした。")
+        thread = self._thread
+        self._thread = None
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=2)
+        self._drain_queue()
+
+    def _audio_callback(self, indata, _frames, _time, status) -> None:  # type: ignore[no-untyped-def]
+        if status or self._paused.is_set():
+            return
+        try:
+            self._queue.put_nowait(bytes(indata))
+        except queue.Full:
+            pass
+
+    def _process_audio(self) -> None:
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    audio = self._queue.get(timeout=0.2)
+                except queue.Empty:
+                    continue
+                if self._paused.is_set() or self._detector is None:
+                    continue
+                utterance = self._detector.accept(audio)
+                if utterance:
+                    self._paused.set()
+                    self.on_status("音声を認識中…")
+                    self.on_utterance(utterance, self.sample_rate)
+        except (ValueError, RuntimeError, VoiceError) as exc:
+            self._paused.set()
+            self.on_error(f"マイク待受中にエラーが発生しました: {exc}")
+
+    def _drain_queue(self) -> None:
+        while True:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                return
 
 
 class OfflineSpeechRecognizer:
@@ -363,10 +562,12 @@ class SpeechSynthesizer:
 class VoiceServices:
     def __init__(self, config: AppConfig) -> None:
         self.recorder = MicrophoneRecorder(config.microphone_device)
+        self.listener = ContinuousMicrophoneListener(config)
         self.recognizer = OfflineSpeechRecognizer()
         self.voicevox = VoicevoxRuntime(config)
         self.synthesizer = SpeechSynthesizer(config, self.voicevox)
 
     def close(self) -> None:
         self.recorder.close()
+        self.listener.stop()
         self.voicevox.stop_if_owned()
