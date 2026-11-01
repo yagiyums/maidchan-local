@@ -12,7 +12,7 @@ Windowsデスクトップに常駐する、ローカル完結型のパーソナ�
 - Ollama経由の日本語会話（既定: `qwen2.5:3b`）
 - 起動時にOllamaを自動検出・自動起動し、初回のみモデルを自動取得
 - マイクからの日本語音声入力（Voskによる完全ローカル認識）
-- メイドちゃんの応答読み上げ（Windows日本語女性音声）
+- メイドちゃんの応答読み上げ（VOICEVOX、Windows音声フォールバック）
 - `%APPDATA%\MaidchanLocal` だけに保存される設定と会話履歴
 - Ollama未接続時の完全オフライン応答
 
@@ -65,7 +65,11 @@ Ollamaもモデルもローカルで動作します。初回モデル取得時�
   "auto_pull_model": true,
   "voice_input_enabled": true,
   "tts_enabled": true,
-  "tts_voice_keyword": "Haruka",
+  "tts_engine": "voicevox",
+  "voicevox_url": "http://127.0.0.1:50021",
+  "voicevox_speaker": 0,
+  "voicevox_credit": "VOICEVOX:四国めたん",
+  "voicevox_speed_scale": 1.05,
   "mascot_width": 190,
   "save_history": true
 }
@@ -94,6 +98,8 @@ Python環境を含むWindowsアプリを生成する場合は次を実行しま�
 アプリが直接通信するのは設定したOllamaエンドポイントだけです。既定値は同じPCの `127.0.0.1:11434` です。テレメトリ、広告SDK、クラウドAI SDKは含みません。会話履歴を残さない場合は `save_history` を `false` にしてください。
 
 マイク音声はメモリ上で処理し、録音ファイルとして保存しません。日本語文字起こしもPC内のVoskモデルで行い、音声をクラウドへ送信しません。音声入力を表示しない場合は `voice_input_enabled`、読み上げを停止する場合は `tts_enabled` を `false` にしてください。
+
+応答音声はローカルのVOICEVOX Engineへ送られ、`audio_query` と `synthesis` APIで生成されます。既定音声は「四国めたん・あまあま」です。利用時のクレジットは **VOICEVOX:四国めたん** です。VOICEVOXが利用できない場合のみ、Windowsの日本語音声へ自動的に切り替わります。
 
 ## ライセンス
 

@@ -25,6 +25,15 @@ class AppConfig:
     auto_pull_model: bool = True
     voice_input_enabled: bool = True
     tts_enabled: bool = True
+    tts_engine: str = "voicevox"
+    voicevox_url: str = "http://127.0.0.1:50021"
+    voicevox_speaker: int = 0
+    voicevox_credit: str = "VOICEVOX:四国めたん"
+    voicevox_speed_scale: float = 1.05
+    voicevox_pitch_scale: float = 0.0
+    voicevox_intonation_scale: float = 1.0
+    voicevox_volume_scale: float = 1.0
+    auto_start_voicevox: bool = True
     tts_voice_keyword: str = "Haruka"
     tts_rate: int = 1
     tts_volume: int = 100

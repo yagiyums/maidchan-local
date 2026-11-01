@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from .assistant import LocalAssistant, Reply
 from .config import AppConfig
 from .ollama_runtime import OllamaRuntime, RuntimeResult
-from .voice import VoiceError, VoiceServices
+from .voice import VoiceError, VoiceRuntimeResult, VoiceServices
 
 
 class WorkerSignals(QObject):
@@ -96,6 +96,18 @@ class SpeechWorker(QRunnable):
             pass
 
 
+class VoiceRuntimeWorker(QRunnable):
+    def __init__(self, voice: VoiceServices) -> None:
+        super().__init__()
+        self.voice = voice
+        self.signals = RuntimeWorkerSignals()
+
+    @Slot()
+    def run(self) -> None:
+        result = self.voice.voicevox.ensure_ready(self.signals.progress.emit)
+        self.signals.finished.emit(result)
+
+
 class MascotWindow(QWidget):
     def __init__(
         self,
@@ -151,7 +163,9 @@ class MascotWindow(QWidget):
         self.mic_button.clicked.connect(self._toggle_recording)
         self.mic_button.setVisible(self.config.voice_input_enabled)
         self.speaker_button = QPushButton("🔊" if self.config.tts_enabled else "🔇")
-        self.speaker_button.setToolTip("応答音声のオン・オフ")
+        self.speaker_button.setToolTip(
+            f"応答音声のオン・オフ（{self.config.voicevox_credit}）"
+        )
         self.speaker_button.clicked.connect(self._toggle_speech)
         input_row.addWidget(self.input, 1)
         input_row.addWidget(self.send_button)
@@ -320,7 +334,16 @@ class MascotWindow(QWidget):
 
     @Slot(object)
     def _runtime_finished(self, result: RuntimeResult) -> None:
-        self.message.setText(result.message)
+        self._local_ai_status = result.message
+        self._show_runtime_progress("VOICEVOXを確認中…")
+        worker = VoiceRuntimeWorker(self.voice)
+        worker.signals.progress.connect(self._show_runtime_progress)
+        worker.signals.finished.connect(self._voice_runtime_finished)
+        self._threads.start(worker)
+
+    @Slot(object)
+    def _voice_runtime_finished(self, result: VoiceRuntimeResult) -> None:
+        self.message.setText(f"{self._local_ai_status}\n{result.message}")
         self.input.setEnabled(True)
         self.send_button.setEnabled(True)
         self.mic_button.setEnabled(True)
