@@ -55,3 +55,23 @@ def test_voice_conversation_is_stored_and_reused(tmp_path: Path) -> None:
         for message in requests[1]
     )
 
+
+def test_maidchan_name_is_resolved_as_self_reference(tmp_path: Path) -> None:
+    config = AppConfig(save_history=False)
+    assistant = LocalAssistant(config, ConversationMemory(tmp_path / "history.jsonl"))
+    requests: list[list[dict[str, str]]] = []
+
+    def chat(messages: list[dict[str, str]]) -> str:
+        requests.append(messages)
+        return "私はローカルAIメイドです。"
+
+    assistant.client.chat = chat
+    assistant.reply("メイドちゃんは何ができるの？", input_source="voice")
+
+    system_prompt = requests[0][0]["content"]
+    user_prompt = requests[0][-1]["content"]
+    assert "あなた自身" in system_prompt
+    assert "一人称の「私」" in system_prompt
+    assert "あなた自身を指す呼び名" in user_prompt
+    assert "音声入力の文字起こし" in user_prompt
+

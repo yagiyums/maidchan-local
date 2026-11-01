@@ -148,14 +148,20 @@ class LocalAssistant:
             self.memory.append("assistant", answer)
         return Reply(answer, source)
 
-    @staticmethod
-    def _memory_content(content: str, source: str) -> str:
+    def _memory_content(self, content: str, source: str) -> str:
+        context: list[str] = []
+        aliases = {"メイドちゃん", self.config.assistant_name}
+        if any(alias and alias in content for alias in aliases):
+            context.append("『メイドちゃん』は応答するあなた自身を指す呼び名です")
         if source == "voice":
-            return f"[音声入力の文字起こし] {content}"
+            context.append("音声入力の文字起こし")
+        if context:
+            return f"[{'／'.join(context)}] {content}"
         return content
 
     def _system_prompt(self) -> str:
         return f"""あなたはPCに常駐するローカルAIメイド「{self.config.assistant_name}」です。
+ユーザーが「メイドちゃん」と呼んだ場合、それは第三者ではなくあなた自身のことです。「メイドちゃん」について尋ねられたら、必ず自分のこととして一人称の「私」で答えてください。
 ユーザーを「{self.config.user_name}」と呼びます。落ち着いて有能で、少し素っ気ないものの親切です。
 日本語で簡潔に回答してください。知らないことは推測で断定しません。
 会話履歴にあるユーザーの発言、好み、決定事項を記憶として参照し、現在の返答へ自然に反映してください。
