@@ -114,10 +114,10 @@ class OllamaClient:
 class LocalAssistant:
     def __init__(self, config: AppConfig, memory: ConversationMemory | None = None) -> None:
         self.config = config
-        self.memory = memory or ConversationMemory()
+        self.memory = memory or ConversationMemory(max_messages=config.memory_max_messages)
         self.client = OllamaClient(config)
 
-    def reply(self, user_text: str) -> Reply:
+    def reply(self, user_text: str, input_source: str = "text") -> Reply:
         text = user_text.strip()
         if not text:
             return Reply("何か入力してください、ご主人様。", "offline")
@@ -128,8 +128,13 @@ class LocalAssistant:
 
         history = self.memory.recent() if self.config.save_history else []
         messages = [{"role": "system", "content": self._system_prompt()}]
-        messages.extend({"role": item.role, "content": item.content} for item in history)
-        messages.append({"role": "user", "content": text})
+        messages.extend(
+            {"role": item.role, "content": self._memory_content(item.content, item.source)}
+            for item in history
+        )
+        messages.append(
+            {"role": "user", "content": self._memory_content(text, input_source)}
+        )
 
         try:
             answer = self.client.chat(messages)
@@ -139,14 +144,22 @@ class LocalAssistant:
             source = "offline"
 
         if self.config.save_history:
-            self.memory.append("user", text)
+            self.memory.append("user", text, input_source)
             self.memory.append("assistant", answer)
         return Reply(answer, source)
+
+    @staticmethod
+    def _memory_content(content: str, source: str) -> str:
+        if source == "voice":
+            return f"[音声入力の文字起こし] {content}"
+        return content
 
     def _system_prompt(self) -> str:
         return f"""あなたはPCに常駐するローカルAIメイド「{self.config.assistant_name}」です。
 ユーザーを「{self.config.user_name}」と呼びます。落ち着いて有能で、少し素っ気ないものの親切です。
 日本語で簡潔に回答してください。知らないことは推測で断定しません。
+会話履歴にあるユーザーの発言、好み、決定事項を記憶として参照し、現在の返答へ自然に反映してください。
+「音声入力の文字起こし」と付いた発言は、文脈から明らかな誤認識だけを慎重に補い、判断できない場合は確認してください。
 あなたはローカル環境で動き、ユーザーが明示しない限り外部サービスへ情報を送りません。
 PC操作を実行したふりはせず、できない場合は手順を提案してください。"""
 

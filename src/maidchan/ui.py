@@ -38,15 +38,16 @@ class WorkerSignals(QObject):
 
 
 class ReplyWorker(QRunnable):
-    def __init__(self, assistant: LocalAssistant, text: str) -> None:
+    def __init__(self, assistant: LocalAssistant, text: str, input_source: str) -> None:
         super().__init__()
         self.assistant = assistant
         self.text = text
+        self.input_source = input_source
         self.signals = WorkerSignals()
 
     @Slot()
     def run(self) -> None:
-        reply = self.assistant.reply(self.text)
+        reply = self.assistant.reply(self.text, self.input_source)
         self.signals.finished.emit(reply)
 
 
@@ -346,13 +347,13 @@ class MascotWindow(QWidget):
             self.input.clear()
             self._submit(text)
 
-    def _submit(self, text: str) -> None:
+    def _submit(self, text: str, input_source: str = "text") -> None:
         self.voice.listener.pause()
         self.show_chat()
         self.message.setText("考え中…")
         self.input.setEnabled(False)
         self.send_button.setEnabled(False)
-        worker = ReplyWorker(self.assistant, text)
+        worker = ReplyWorker(self.assistant, text, input_source)
         worker.signals.finished.connect(self._show_reply)
         self._threads.start(worker)
 
@@ -421,7 +422,7 @@ class MascotWindow(QWidget):
             self._resume_listening()
             return
         self.input.setText(text)
-        self._submit(text)
+        self._submit(text, input_source="voice")
 
     @Slot(str)
     def _voice_failed(self, message: str) -> None:

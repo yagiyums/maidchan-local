@@ -54,6 +54,7 @@ class AppConfig:
     mascot_width: int = 190
     always_on_top: bool = True
     save_history: bool = True
+    memory_max_messages: int = 60
     start_x: int | None = None
     start_y: int | None = None
 

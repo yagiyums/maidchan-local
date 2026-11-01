@@ -32,3 +32,26 @@ def test_help_command_does_not_call_model(tmp_path: Path) -> None:
     assert reply.source == "command"
     assert "/status" in reply.text
 
+
+def test_voice_conversation_is_stored_and_reused(tmp_path: Path) -> None:
+    config = AppConfig(save_history=True, memory_max_messages=60)
+    memory = ConversationMemory(tmp_path / "history.jsonl", max_messages=60)
+    assistant = LocalAssistant(config, memory)
+    requests: list[list[dict[str, str]]] = []
+
+    def chat(messages: list[dict[str, str]]) -> str:
+        requests.append(messages)
+        return "承知しました。"
+
+    assistant.client.chat = chat
+    assistant.reply("好きな色は青です", input_source="voice")
+    assistant.reply("私の好きな色を覚えていますか", input_source="voice")
+
+    stored = memory.recent()
+    assert stored[0].content == "好きな色は青です"
+    assert stored[0].source == "voice"
+    assert any(
+        message["content"] == "[音声入力の文字起こし] 好きな色は青です"
+        for message in requests[1]
+    )
+
