@@ -126,5 +126,5 @@ def test_research_context_and_source_are_added_to_answer(tmp_path: Path) -> None
 
     assert reply.source == "ollama+research"
     assert "出典:" in reply.text
-    assert any("外部参考資料" in message["content"] for message in requests[0])
+    assert any("外部情報源" in message["content"] for message in requests[0])
 

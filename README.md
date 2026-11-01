@@ -1,6 +1,6 @@
 # Maid-chan Local
 
-Windowsデスクトップに常駐する、ローカル完結型のパーソナルメイド・マスコットです。会話処理はPC上の[Ollama](https://ollama.com/)に接続し、クラウドの従量課金AI APIは使いません。Ollamaが停止中でも、時刻・日付・基本案内にはオフラインで応答します。立ち絵は呼吸、まばたき、髪や衣装の揺れを含む透過GIFで常時アニメーションします。
+Windowsデスクトップに常駐する、ローカル完結型のパーソナルメイド・マスコットです。会話処理はPC上の[Ollama](https://ollama.com/)に接続し、クラウドの従量課金AI APIは使いません。Ollamaが停止中でも、時刻・日付・基本案内にはオフラインで応答します。立ち絵は透過GIFで常時動き、返答内容に合わせた感情表現と待機中のランダムな表情変化を行います。
 
 会話中の「メイドちゃん」はアシスタント自身の呼び名として解釈され、メイドちゃん本人についての質問には一人称で答えます。
 
@@ -13,7 +13,9 @@ Windowsデスクトップに常駐する、ローカル完結型のパーソナ�
 - タスクトレイ常駐
 - Ollama経由の日本語会話（既定: `qwen2.5:3b`）
 - 起動時にOllamaを自動検出・自動起動し、初回のみモデルを自動取得
-- 一般知識を必要に応じてWikipediaで調べ、出典付きで回答
+- 一般知識、天気、為替をWikipedia・Open-Meteo・Frankfurterから自律的に取得
+- 返答に合わせた喜び・悲しみ・驚き・怒り・考え中の感情アニメーション
+- 待機中も20〜45秒間隔でランダムな表情アニメーション
 - マイクの発話を自動検出するハンズフリー高精度日本語音声入力（faster-whisper）
 - メイドちゃんの応答読み上げ（VOICEVOX、Windows音声フォールバック）
 - `%APPDATA%\MaidchanLocal` だけに保存される設定と会話履歴
@@ -88,9 +90,15 @@ Ollamaもモデルもローカルで動作します。初回モデル取得時�
   "voicevox_speed_scale": 1.05,
   "voicevox_volume_scale": 1.0,
   "mascot_width": 190,
+  "response_emotion_seconds": 8,
+  "idle_emotion_min_seconds": 20,
+  "idle_emotion_max_seconds": 45,
+  "idle_emotion_display_seconds": 4,
   "save_history": true,
   "memory_max_messages": 60,
   "web_research_enabled": true,
+  "weather_research_enabled": true,
+  "exchange_rate_research_enabled": true,
   "research_timeout_seconds": 10,
   "research_max_results": 3
 }
@@ -116,7 +124,7 @@ Python環境を含むWindowsアプリを生成する場合は次を実行しま�
 
 ## プライバシー
 
-アプリはローカルのOllamaに加え、一般知識の調査時だけ日本語版Wikipediaへ検索語を送信します。会話履歴やマイク音声は送信しません。ウェブ調査を使わない場合は `web_research_enabled` を `false` にしてください。テレメトリ、広告SDK、クラウドAI SDKは含みません。キーボード入力と音声入力の文字起こしは `%APPDATA%\MaidchanLocal\history.jsonl` に保存され、直近60メッセージをローカルAIの記憶として使います。音声入力には入力元情報も保存されます。会話履歴を残さない場合は `save_history` を `false` にするか、`/clear` で削除してください。
+アプリはローカルのOllamaに加え、一般知識の調査時は日本語版Wikipedia、天気では国土地理院とOpen-Meteo、為替ではFrankfurterへ必要な検索語や通貨ペアだけを送信します。会話履歴やマイク音声は送信しません。外部調査全体は `web_research_enabled`、天気だけは `weather_research_enabled`、為替だけは `exchange_rate_research_enabled` を `false` にすると停止できます。テレメトリ、広告SDK、クラウドAI SDKは含みません。キーボード入力と音声入力の文字起こしは `%APPDATA%\MaidchanLocal\history.jsonl` に保存され、直近60メッセージをローカルAIの記憶として使います。音声入力には入力元情報も保存されます。会話履歴を残さない場合は `save_history` を `false` にするか、`/clear` で削除してください。
 
 マイク音声はメモリ上で処理し、録音ファイルとして保存しません。日本語文字起こしもPC内のfaster-whisperモデルで行い、音声をクラウドへ送信しません。初回の音声認識時だけ多言語版Whisper `small` モデルを取得し、以後は `%APPDATA%\MaidchanLocal\models` に保存したモデルを使います。入力はマイク感度で増幅した後、DC成分を除去し、16kHzへ変換して発話音量を自動正規化します。会話UIで入力レベルを確認しながらマイク感度を100〜600%で調整できます。メイドちゃんの読み上げ中とAI処理中はマイク待受を一時停止し、自己応答ループを防ぎます。応答後は自動的に待受へ戻り、処理スレッドが停止していた場合も自動再起動します。常時待受を止める場合はタスクトレイからOFFにするか、`voice_input_enabled` を `false` にしてください。
 
@@ -124,4 +132,4 @@ Python環境を含むWindowsアプリを生成する場合は次を実行しま�
 
 ## ライセンス
 
-ソースコードはMIT Licenseです。`src/maidchan/assets/maid.png` は本プロジェクト用にAI生成したオリジナル素材です。
+ソースコードはMIT Licenseです。`src/maidchan/assets/maid.png` と感情差分は本プロジェクト用にAI生成したオリジナル素材です。

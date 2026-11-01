@@ -1,8 +1,19 @@
 from __future__ import annotations
 
+import random
 from importlib.resources import files
 
-from PySide6.QtCore import QObject, QPoint, QRunnable, QSize, Qt, QThreadPool, Signal, Slot
+from PySide6.QtCore import (
+    QObject,
+    QPoint,
+    QRunnable,
+    QSize,
+    Qt,
+    QThreadPool,
+    QTimer,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -29,6 +40,7 @@ from PySide6.QtWidgets import (
 
 from .assistant import LocalAssistant, Reply
 from .config import AppConfig
+from .emotion import choose_idle_emotion
 from .ollama_runtime import OllamaRuntime, RuntimeResult
 from .voice import VoiceError, VoiceRuntimeResult, VoiceServices
 
@@ -240,16 +252,32 @@ class MascotWindow(QWidget):
 
         self.mascot = QLabel()
         self.mascot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        animation_files = {
+            "neutral": "maid_idle.gif",
+            "happy": "maid_happy.gif",
+            "sad": "maid_sad.gif",
+            "surprised": "maid_surprised.gif",
+            "angry": "maid_angry.gif",
+            "thinking": "maid_thinking.gif",
+        }
         animation_path = files("maidchan").joinpath("assets/maid_idle.gif")
         source_size = QImageReader(str(animation_path)).size()
+        self._mascot_movies: dict[str, QMovie] = {}
         self._mascot_movie = QMovie(str(animation_path))
         if self._mascot_movie.isValid() and source_size.isValid():
             height = round(
                 self.config.mascot_width * source_size.height() / source_size.width()
             )
             scaled_size = QSize(self.config.mascot_width, height)
-            self._mascot_movie.setScaledSize(scaled_size)
-            self._mascot_movie.setCacheMode(QMovie.CacheMode.CacheAll)
+            for emotion, filename in animation_files.items():
+                movie_path = files("maidchan").joinpath(f"assets/{filename}")
+                movie = QMovie(str(movie_path))
+                if not movie.isValid():
+                    continue
+                movie.setScaledSize(scaled_size)
+                movie.setCacheMode(QMovie.CacheMode.CacheAll)
+                self._mascot_movies[emotion] = movie
+            self._mascot_movie = self._mascot_movies.get("neutral", self._mascot_movie)
             self.mascot.setFixedSize(scaled_size)
             self.mascot.setMovie(self._mascot_movie)
             self._mascot_movie.start()
@@ -263,6 +291,14 @@ class MascotWindow(QWidget):
                 )
             )
         root.addWidget(self.mascot)
+
+        self._emotion_return_timer = QTimer(self)
+        self._emotion_return_timer.setSingleShot(True)
+        self._emotion_return_timer.timeout.connect(self._return_to_idle)
+        self._idle_emotion_timer = QTimer(self)
+        self._idle_emotion_timer.setSingleShot(True)
+        self._idle_emotion_timer.timeout.connect(self._show_random_idle_emotion)
+        self._schedule_idle_emotion()
 
         self.setStyleSheet(
             """
@@ -349,6 +385,8 @@ class MascotWindow(QWidget):
 
     def _submit(self, text: str, input_source: str = "text") -> None:
         self.voice.listener.pause()
+        self._stop_emotion_timers()
+        self._set_animation("thinking")
         self.show_chat()
         self.message.setText("考え中…")
         self.input.setEnabled(False)
@@ -409,6 +447,8 @@ class MascotWindow(QWidget):
 
     @Slot(str)
     def _show_voice_progress(self, message: str) -> None:
+        self._stop_emotion_timers()
+        self._set_animation("thinking")
         self.message.setText(message)
         self.input.setEnabled(False)
         self.send_button.setEnabled(False)
@@ -426,6 +466,7 @@ class MascotWindow(QWidget):
 
     @Slot(str)
     def _voice_failed(self, message: str) -> None:
+        self._play_temporary_emotion("sad")
         self.message.setText(message)
         self.input.setEnabled(True)
         self.send_button.setEnabled(True)
@@ -441,6 +482,7 @@ class MascotWindow(QWidget):
 
     @Slot(str)
     def _show_runtime_progress(self, message: str) -> None:
+        self._set_animation("thinking")
         self.message.setText(message)
         self.input.setEnabled(False)
         self.send_button.setEnabled(False)
@@ -456,6 +498,7 @@ class MascotWindow(QWidget):
 
     @Slot(object)
     def _voice_runtime_finished(self, result: VoiceRuntimeResult) -> None:
+        self._play_temporary_emotion("happy", 3500)
         self.message.setText(f"{self._local_ai_status}\n{result.message}")
         self.input.setEnabled(True)
         self.send_button.setEnabled(True)
@@ -468,6 +511,7 @@ class MascotWindow(QWidget):
 
     @Slot(object)
     def _show_reply(self, reply: Reply) -> None:
+        self._play_temporary_emotion(reply.emotion)
         suffix = "\n\n[オフライン応答]" if reply.source == "offline" else ""
         self.message.setText(reply.text + suffix)
         self.input.setEnabled(True)
@@ -483,7 +527,51 @@ class MascotWindow(QWidget):
 
     @Slot(object)
     def _speech_finished(self, _result: object) -> None:
+        self._return_to_idle()
         self._resume_listening()
+
+    def _set_animation(self, emotion: str) -> None:
+        movie = self._mascot_movies.get(emotion)
+        if movie is None:
+            movie = self._mascot_movies.get("neutral")
+        if movie is None or movie is self._mascot_movie:
+            return
+        self._mascot_movie.stop()
+        self._mascot_movie = movie
+        self.mascot.setMovie(movie)
+        movie.jumpToFrame(0)
+        movie.start()
+
+    def _play_temporary_emotion(
+        self, emotion: str, duration_ms: int | None = None
+    ) -> None:
+        self._stop_emotion_timers()
+        self._set_animation(emotion)
+        duration = duration_ms or self.config.response_emotion_seconds * 1000
+        self._emotion_return_timer.start(max(1000, duration))
+
+    def _return_to_idle(self) -> None:
+        self._emotion_return_timer.stop()
+        self._set_animation("neutral")
+        self._schedule_idle_emotion()
+
+    def _stop_emotion_timers(self) -> None:
+        self._emotion_return_timer.stop()
+        self._idle_emotion_timer.stop()
+
+    def _schedule_idle_emotion(self) -> None:
+        minimum = max(5, self.config.idle_emotion_min_seconds)
+        maximum = max(minimum, self.config.idle_emotion_max_seconds)
+        self._idle_emotion_timer.start(random.randint(minimum, maximum) * 1000)
+
+    @Slot()
+    def _show_random_idle_emotion(self) -> None:
+        if not self.input.isEnabled():
+            self._schedule_idle_emotion()
+            return
+        self._play_temporary_emotion(
+            choose_idle_emotion(), self.config.idle_emotion_display_seconds * 1000
+        )
 
     def _resume_listening(self) -> None:
         if self.config.voice_input_enabled:
