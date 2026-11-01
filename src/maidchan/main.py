@@ -4,9 +4,9 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from .assistant import LocalAssistant
-from .config import AppConfig
-from .ui import MascotWindow
+from maidchan.assistant import LocalAssistant
+from maidchan.config import AppConfig
+from maidchan.ui import MascotWindow
 
 
 def main() -> int:
