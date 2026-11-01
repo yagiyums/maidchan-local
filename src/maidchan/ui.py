@@ -3,7 +3,7 @@ from __future__ import annotations
 from importlib.resources import files
 
 from PySide6.QtCore import QObject, QPoint, QRunnable, QSize, Qt, QThreadPool, Signal, Slot
-from PySide6.QtGui import QAction, QCloseEvent, QIcon, QMouseEvent, QPixmap
+from PySide6.QtGui import QAction, QCloseEvent, QIcon, QMouseEvent, QMovie, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -190,15 +190,30 @@ class MascotWindow(QWidget):
         self.bubble.hide()
         root.addWidget(self.bubble)
 
-        asset_path = files("maidchan").joinpath("assets/maid.png")
-        original = QPixmap(str(asset_path))
         self.mascot = QLabel()
-        self.mascot.setPixmap(
-            original.scaledToWidth(
-                self.config.mascot_width, Qt.TransformationMode.SmoothTransformation
-            )
-        )
         self.mascot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        animation_path = files("maidchan").joinpath("assets/maid_idle.gif")
+        self._mascot_movie = QMovie(str(animation_path))
+        self._mascot_movie.setCacheMode(QMovie.CacheMode.CacheAll)
+        if self._mascot_movie.isValid() and self._mascot_movie.jumpToFrame(0):
+            source_size = self._mascot_movie.currentImage().size()
+            height = round(
+                self.config.mascot_width * source_size.height() / source_size.width()
+            )
+            scaled_size = QSize(self.config.mascot_width, height)
+            self._mascot_movie.setScaledSize(scaled_size)
+            self.mascot.setFixedSize(scaled_size)
+            self.mascot.setMovie(self._mascot_movie)
+            self._mascot_movie.start()
+        else:
+            asset_path = files("maidchan").joinpath("assets/maid.png")
+            original = QPixmap(str(asset_path))
+            self.mascot.setPixmap(
+                original.scaledToWidth(
+                    self.config.mascot_width,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
         root.addWidget(self.mascot)
 
         self.setStyleSheet(
@@ -222,7 +237,9 @@ class MascotWindow(QWidget):
         self.adjustSize()
 
     def _setup_tray(self) -> None:
-        pixmap = self.mascot.pixmap()
+        pixmap = self._mascot_movie.currentPixmap()
+        if pixmap.isNull():
+            pixmap = self.mascot.pixmap()
         self.tray = QSystemTrayIcon(QIcon(pixmap), self)
         menu = QMenu()
         talk = QAction("話しかける", self)

@@ -461,6 +461,7 @@ class VoicevoxRuntime:
             creation_flags = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
         return subprocess.Popen(
             [str(executable), "--host", host, "--port", str(port)],
+            cwd=executable.parent,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
