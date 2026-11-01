@@ -279,6 +279,10 @@ class ContinuousMicrophoneListener:
     def is_paused(self) -> bool:
         return self._paused.is_set()
 
+    @property
+    def is_processing(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
     def set_callbacks(
         self,
         *,
@@ -326,7 +330,8 @@ class ContinuousMicrophoneListener:
         self.on_level(0)
 
     def resume(self) -> None:
-        if not self.is_running:
+        if not self.is_running or not self.is_processing:
+            self.stop()
             self.start()
             return
         self._drain_queue()
@@ -378,8 +383,9 @@ class ContinuousMicrophoneListener:
                     self.on_level(0)
                     self.on_status("音声を認識中…")
                     self.on_utterance(utterance, self.sample_rate)
-        except (ValueError, RuntimeError, VoiceError) as exc:
+        except Exception as exc:  # noqa: BLE001 - restart after any worker failure
             self._paused.set()
+            self.stop()
             self.on_error(f"マイク待受中にエラーが発生しました: {exc}")
 
     def _drain_queue(self) -> None:

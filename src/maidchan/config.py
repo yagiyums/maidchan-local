@@ -29,7 +29,7 @@ class AppConfig:
     recognition_max_gain: float = 8.0
     vad_min_rms: int = 500
     vad_noise_multiplier: float = 2.2
-    vad_silence_ms: int = 900
+    vad_silence_ms: int = 700
     vad_min_speech_ms: int = 200
     vad_max_speech_seconds: int = 20
     vad_preroll_ms: int = 300

@@ -2,6 +2,7 @@ from array import array
 
 from maidchan.config import AppConfig
 from maidchan.voice import (
+    ContinuousMicrophoneListener,
     EnergyVoiceDetector,
     SpeechModelManager,
     VoicevoxRuntime,
@@ -74,6 +75,47 @@ def test_energy_detector_emits_after_speech_and_silence() -> None:
             break
     assert result is not None
     assert len(result) > len(speech)
+
+
+def test_energy_detector_accepts_two_consecutive_utterances() -> None:
+    config = AppConfig(
+        vad_min_rms=400,
+        vad_noise_multiplier=2.2,
+        vad_block_ms=50,
+        vad_min_speech_ms=200,
+        vad_silence_ms=200,
+        vad_preroll_ms=100,
+    )
+    detector = EnergyVoiceDetector(16000, config)
+    silence = array("h", [20] * 800).tobytes()
+    speech = array("h", [2000] * 800).tobytes()
+    utterances = []
+    for _cycle in range(2):
+        for _ in range(6):
+            result = detector.accept(speech)
+            if result is not None:
+                utterances.append(result)
+        for _ in range(6):
+            result = detector.accept(silence)
+            if result is not None:
+                utterances.append(result)
+    assert len(utterances) == 2
+
+
+def test_listener_restarts_when_processing_thread_has_stopped(monkeypatch) -> None:
+    listener = ContinuousMicrophoneListener(AppConfig())
+
+    class DeadThread:
+        def is_alive(self) -> bool:
+            return False
+
+    listener._stream = object()  # type: ignore[assignment]
+    listener._thread = DeadThread()  # type: ignore[assignment]
+    calls: list[str] = []
+    monkeypatch.setattr(listener, "stop", lambda: calls.append("stop"))
+    monkeypatch.setattr(listener, "start", lambda: calls.append("start"))
+    listener.resume()
+    assert calls == ["stop", "start"]
 
 
 def test_pcm_gain_amplifies_quiet_audio() -> None:

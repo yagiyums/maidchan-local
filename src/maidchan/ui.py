@@ -95,8 +95,9 @@ class TranscriptionWorker(QRunnable):
                 self.audio, self.sample_rate, self.signals.progress.emit
             )
             self.signals.finished.emit(text)
-        except VoiceError as exc:
-            self.signals.failed.emit(str(exc))
+        except Exception as exc:  # noqa: BLE001 - keep the listener recoverable
+            message = str(exc) if isinstance(exc, VoiceError) else f"音声認識エラー: {exc}"
+            self.signals.failed.emit(message)
 
 
 class SpeechWorker(QRunnable):
@@ -110,9 +111,10 @@ class SpeechWorker(QRunnable):
     def run(self) -> None:
         try:
             self.voice.synthesizer.speak(self.text)
-        except VoiceError:
+        except Exception:  # noqa: BLE001, S110 - recovery runs in finally
             pass
-        self.signals.finished.emit(None)
+        finally:
+            self.signals.finished.emit(None)
 
 
 class VoiceRuntimeWorker(QRunnable):
@@ -483,11 +485,14 @@ class MascotWindow(QWidget):
         self._resume_listening()
 
     def _resume_listening(self) -> None:
-        if self.config.voice_input_enabled and self.voice.listener.is_running:
+        if self.config.voice_input_enabled:
             try:
                 self.voice.listener.resume()
             except VoiceError as exc:
-                self._voice_failed(str(exc))
+                self.message.setText(str(exc))
+                self.input.setEnabled(True)
+                self.send_button.setEnabled(True)
+                self.mic_status.setText("🎤 再起動エラー")
 
     def _toggle_visible(self) -> None:
         self.hide() if self.isVisible() else self.show_chat()
